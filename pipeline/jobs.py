@@ -442,7 +442,7 @@ class PipelineService:
             max_silence_ms=cfg.get("max_silence_ms", 300.0),
             clip_threshold=cfg.get("clip_threshold", 0.99),
             min_rms=cfg.get("min_rms", 0.01),
-            max_duration_deviation=cfg.get("max_duration_deviation", 0.30),
+            max_duration_deviation=cfg.get("max_duration_deviation", 0.50),
         )
 
     def _resolve_audio_prompt_path(self, voice_config: Dict[str, Any]) -> Optional[str]:
