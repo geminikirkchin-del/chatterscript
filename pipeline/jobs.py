@@ -246,13 +246,14 @@ class PipelineService:
         asr_verifier = self._get_asr_verifier()
         agent = self._get_parameter_agent()
 
-        # Track the last verification failures to feed the agent.
+        # Track the last verification failures and metrics to feed the agent.
         last_audio_failure: Optional[str] = None
         last_asr_failure: Optional[str] = None
+        last_audio_metrics: Dict[str, Any] = {}
 
         # Phase 1: base retries.
         for attempt in range(max_retries + 1):
-            passed, audio_failure, asr_failure = self._attempt_segment(
+            passed, audio_failure, asr_failure, audio_metrics = self._attempt_segment(
                 job=job,
                 seg_record=seg_record,
                 audio_prompt_path=audio_prompt_path,
@@ -269,6 +270,7 @@ class PipelineService:
                 return seg_path
             if audio_failure:
                 last_audio_failure = audio_failure
+                last_audio_metrics = audio_metrics or {}
             if asr_failure:
                 last_asr_failure = asr_failure
 
@@ -277,9 +279,10 @@ class PipelineService:
             base_params=seg_record.gen_params,
             audio_failure=last_audio_failure,
             asr_failure=last_asr_failure,
+            audio_metrics=last_audio_metrics,
         )
         seg_record.gen_params = decision.gen_params
-        passed, _, _ = self._attempt_segment(
+        passed, _, _, _ = self._attempt_segment(
             job=job,
             seg_record=seg_record,
             audio_prompt_path=audio_prompt_path,
@@ -348,7 +351,7 @@ class PipelineService:
             seg_record.verification_log.append(log_entry)
             seg_record.retry_count = attempt
             self.store.save(job)
-            return False, None, None
+            return False, None, None, {}
 
         sf.write(str(seg_path), audio_np, sr, subtype="pcm_16")
 
@@ -420,7 +423,7 @@ class PipelineService:
             seg_record.failure_reason = None
             seg_record.retry_count = attempt
             self.store.save(job)
-            return True, None, None
+            return True, None, None, audio_result.metrics
 
         seg_record.retry_count = attempt
         seg_record.failure_reason = failure_reason
@@ -429,7 +432,7 @@ class PipelineService:
             f"Job {job_id} segment {seg_record.index} attempt {attempt} failed: "
             f"{failure_reason}"
         )
-        return False, audio_failure, asr_failure
+        return False, audio_failure, asr_failure, audio_result.metrics
 
     def _load_verification_thresholds(self) -> VerificationThresholds:
         from config import get_pipeline_verification_thresholds

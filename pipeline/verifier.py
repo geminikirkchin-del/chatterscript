@@ -151,6 +151,8 @@ def verify_audio(
 
     # Check duration deviation.
     actual_duration = len(audio) / sr
+    metrics["actual_duration"] = actual_duration
+    metrics["expected_duration"] = expected_duration
     if expected_duration > 0:
         deviation = abs(actual_duration - expected_duration) / expected_duration
     else:

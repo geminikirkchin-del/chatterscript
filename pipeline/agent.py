@@ -73,6 +73,7 @@ class ParameterAgent:
         base_params: Dict[str, Any],
         audio_failure: Optional[str],
         asr_failure: Optional[str],
+        audio_metrics: Optional[Dict[str, Any]] = None,
     ) -> AgentDecision:
         """
         Inspect failure metadata and return adjusted generation parameters.
@@ -118,6 +119,27 @@ class ParameterAgent:
             params["exaggeration"] = round(new_exag, 2)
             deltas["exaggeration"] = params["exaggeration"] - old_exag
             reasons.append("clipping: lower exaggeration")
+
+        # Duration deviation: adjust speed_factor toward the expected duration.
+        if audio_failure == "duration_deviation":
+            metrics = audio_metrics or {}
+            actual_duration = metrics.get("actual_duration")
+            expected_duration = metrics.get("expected_duration")
+            if actual_duration is not None and expected_duration and expected_duration > 0:
+                old_speed = params.get("speed_factor", 1.0)
+                ratio = actual_duration / expected_duration
+                # If audio is too long, raise speed; if too short, lower speed.
+                new_speed = round(max(0.25, min(4.0, old_speed * ratio)), 2)
+                params["speed_factor"] = new_speed
+                deltas["speed_factor"] = new_speed - old_speed
+                reasons.append(f"duration_deviation: speed {old_speed} -> {new_speed}")
+            else:
+                # Fallback: nudge speed up slightly.
+                old_speed = params.get("speed_factor", 1.0)
+                new_speed = round(min(4.0, old_speed + 0.05), 2)
+                params["speed_factor"] = new_speed
+                deltas["speed_factor"] = new_speed - old_speed
+                reasons.append("duration_deviation: nudge speed_factor up")
 
         # Repeated combined failures: also change seed for variety.
         if audio_failure and asr_failure:
