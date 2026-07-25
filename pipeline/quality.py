@@ -9,6 +9,25 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass
+class LayerResult:
+    """Typed result returned by a single verification layer."""
+
+    passed: bool
+    score: float
+    failure_reason: Optional[str]
+    metrics: Dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Plain-dict form stored in layer_results (consumed by jobs/feedback/UI)."""
+        return {
+            "passed": self.passed,
+            "score": self.score,
+            "failure_reason": self.failure_reason,
+            "metrics": self.metrics,
+        }
+
+
+@dataclass
 class QualityVerificationResult:
     """Aggregated result from all verification layers for one segment."""
 
@@ -36,16 +55,12 @@ class QualityVerifier(ABC):
         language: str,
         expected_duration: float,
         context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> LayerResult:
         """
-        Run the verification layer and return a dictionary with at least:
+        Run the verification layer and return a LayerResult.
 
-        - passed (bool)
-        - score (float)
-        - failure_reason (Optional[str])
-        - metrics (Dict[str, Any])
-
-        The returned dictionary is stored under layer_results[self.name].
+        The orchestrator converts it via to_dict() and stores it under
+        layer_results[self.name].
 
         Args:
             context: Optional shared dict that layers can read/write to avoid
@@ -145,23 +160,28 @@ class PipelineQualityVerifier:
                 )
             except Exception as e:
                 logger.warning(f"Verification layer '{layer.name}' failed: {e}")
-                result = {
-                    "passed": False,
-                    "score": 0.0,
-                    "failure_reason": f"{layer.name}_exception",
-                    "metrics": {"error": str(e)},
-                }
+                result = LayerResult(
+                    passed=False,
+                    score=0.0,
+                    failure_reason=f"{layer.name}_exception",
+                    metrics={"error": str(e)},
+                )
 
-            layer_results[layer.name] = result
-            scores.append(float(result.get("score", 0.0)))
+            # Convert to plain dicts at the orchestrator boundary so jobs.py,
+            # the feedback store, and the UI keep consuming untyped dicts.
+            result_dict = (
+                result.to_dict() if isinstance(result, LayerResult) else dict(result)
+            )
+            layer_results[layer.name] = result_dict
+            scores.append(float(result_dict.get("score", 0.0)))
 
             layer_cfg = self.layer_config.get(layer.name, {})
             is_hardfail = layer_cfg.get("hardfail", True)
 
-            if is_hardfail and not result.get("passed", False):
+            if is_hardfail and not result_dict.get("passed", False):
                 overall_passed = False
                 if failure_reason is None:
-                    failure_reason = result.get("failure_reason")
+                    failure_reason = result_dict.get("failure_reason")
 
         overall_score = sum(scores) / len(scores) if scores else 0.0
         return QualityVerificationResult(

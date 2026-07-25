@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 import soundfile as sf
 
-from pipeline.quality import PipelineQualityVerifier, QualityVerificationResult
+from pipeline.quality import LayerResult, PipelineQualityVerifier, QualityVerificationResult
 from pipeline.quality_layers import FFmpegAudioMetricsVerifier
 
 
@@ -43,11 +43,11 @@ class TestFFmpegAudioMetricsVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is True
-            assert result["score"] == 1.0
-            assert result["failure_reason"] is None
-            assert "lufs" in result["metrics"]
-            assert "dynamic_range_db" in result["metrics"]
+            assert result.passed is True
+            assert result.score == 1.0
+            assert result.failure_reason is None
+            assert "lufs" in result.metrics
+            assert "dynamic_range_db" in result.metrics
 
     def test_fails_low_rms(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -61,8 +61,8 @@ class TestFFmpegAudioMetricsVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is False
-            assert result["failure_reason"] == "low_rms"
+            assert result.passed is False
+            assert result.failure_reason == "low_rms"
 
     def test_records_true_peak_without_failing(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -76,9 +76,9 @@ class TestFFmpegAudioMetricsVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert "true_peak_dbtp" in result["metrics"]
+            assert "true_peak_dbtp" in result.metrics
             # True peak is recorded but should not cause failure at segment level.
-            assert result["failure_reason"] != "true_peak_exceeded"
+            assert result.failure_reason != "true_peak_exceeded"
 
 
 class MockVerifier:
@@ -95,12 +95,12 @@ class MockVerifier:
         return self._name
 
     def verify(self, **kwargs):
-        return {
-            "passed": self._passed,
-            "score": self._score,
-            "failure_reason": self._failure_reason,
-            "metrics": {},
-        }
+        return LayerResult(
+            passed=self._passed,
+            score=self._score,
+            failure_reason=self._failure_reason,
+            metrics={},
+        )
 
 
 def test_ffmpeg_audio_metrics_passes_for_normal_tone():
@@ -277,9 +277,9 @@ class TestWhisperXAlignmentVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is True
-            assert result["score"] == 1.0
-            assert result["metrics"]["mean_word_confidence"] == 0.85
+            assert result.passed is True
+            assert result.score == 1.0
+            assert result.metrics["mean_word_confidence"] == 0.85
 
     def test_fails_low_confidence(self, monkeypatch):
         from pipeline.quality_layers import WhisperXAlignmentVerifier
@@ -302,8 +302,8 @@ class TestWhisperXAlignmentVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is False
-            assert result["failure_reason"] == "whisperx_low_confidence"
+            assert result.passed is False
+            assert result.failure_reason == "whisperx_low_confidence"
 
     def test_fails_low_coverage(self, monkeypatch):
         from pipeline.quality_layers import JiwerContentVerifier
@@ -331,8 +331,8 @@ class TestWhisperXAlignmentVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is False
-            assert result["failure_reason"] == "wer_too_high"
+            assert result.passed is False
+            assert result.failure_reason == "wer_too_high"
 
 
 class TestJiwerContentVerifier:
@@ -357,9 +357,9 @@ class TestJiwerContentVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is True
-            assert result["metrics"]["wer"] == 0.0
-            assert result["metrics"]["cer"] == 0.0
+            assert result.passed is True
+            assert result.metrics["wer"] == 0.0
+            assert result.metrics["cer"] == 0.0
 
     def test_fails_high_wer(self, monkeypatch):
         from pipeline.quality_layers import JiwerContentVerifier
@@ -385,8 +385,8 @@ class TestJiwerContentVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is False
-            assert result["failure_reason"] == "wer_too_high"
+            assert result.passed is False
+            assert result.failure_reason == "wer_too_high"
 
     def test_chinese_wer_uses_characters(self, monkeypatch):
         from pipeline.quality_layers import JiwerContentVerifier
@@ -417,8 +417,8 @@ class TestJiwerContentVerifier:
                 language="zh",
                 expected_duration=1.0,
             )
-            assert result["passed"] is True
-            assert result["metrics"]["wer"] == 0.0
+            assert result.passed is True
+            assert result.metrics["wer"] == 0.0
 
 
 class TestWhisperXContextSharing:
@@ -488,9 +488,9 @@ class TestResemblyzerSpeakerVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is True
-            assert result["score"] == 0.82
-            assert result["metrics"]["cosine_similarity"] == 0.82
+            assert result.passed is True
+            assert result.score == 0.82
+            assert result.metrics["cosine_similarity"] == 0.82
 
     def test_no_reference_voice_returns_zero_score(self):
         from pipeline.quality_layers import ResemblyzerSpeakerVerifier
@@ -506,9 +506,9 @@ class TestResemblyzerSpeakerVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is True
-            assert result["score"] == 0.0
-            assert result["metrics"]["cosine_similarity"] is None
+            assert result.passed is True
+            assert result.score == 0.0
+            assert result.metrics["cosine_similarity"] is None
 
 
 class TestLibrosaSpectralVerifier:
@@ -538,10 +538,10 @@ class TestLibrosaSpectralVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is True
-            assert result["score"] == 0.85
-            assert result["metrics"]["mfcc_mse"] == 0.03
-            assert result["metrics"]["spectral_contrast_ratio"] == 0.85
+            assert result.passed is True
+            assert result.score == 0.85
+            assert result.metrics["mfcc_mse"] == 0.03
+            assert result.metrics["spectral_contrast_ratio"] == 0.85
 
     def test_no_reference_voice_returns_zero_score(self):
         from pipeline.quality_layers import LibrosaSpectralVerifier
@@ -557,6 +557,6 @@ class TestLibrosaSpectralVerifier:
                 language="en",
                 expected_duration=1.0,
             )
-            assert result["passed"] is True
-            assert result["score"] == 0.0
-            assert result["metrics"]["mfcc_mse"] is None
+            assert result.passed is True
+            assert result.score == 0.0
+            assert result.metrics["mfcc_mse"] is None

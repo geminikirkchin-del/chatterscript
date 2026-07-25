@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 import soundfile as sf
 
 from config import config_manager
-from pipeline.quality import QualityVerifier
+from pipeline.quality import LayerResult, QualityVerifier
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,40 @@ try:
     import jiwer
 except Exception:
     jiwer = None  # type: ignore[assignment]
+
+
+def _layer_thresholds(
+    layer_name: str, defaults: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
+    """
+    Load a layer's thresholds from pipeline.verification config.
+
+    Config values win over the layer's inline defaults; keys missing from
+    config fall back to the defaults table.
+    """
+    verification_cfg = config_manager.get("pipeline.verification", {})
+    layer_cfg = verification_cfg.get("layers", {}).get(layer_name, {})
+    configured = layer_cfg.get("thresholds")
+    if configured is None:
+        return dict(defaults or {})
+    return {**(defaults or {}), **configured}
+
+
+def _load_runner(func_name: str, label: str):
+    """
+    Import a runner function from verification_wrappers.runner.
+
+    Returns (callable, None) on success or (None, exception) on import
+    failure, so each layer can shape its own unavailable-path metrics.
+    Imported lazily at call time so tests can monkeypatch runner functions.
+    """
+    try:
+        from pipeline.verification_wrappers import runner as _runner
+
+        return getattr(_runner, func_name), None
+    except Exception as e:
+        logger.error(f"Failed to import {label} runner: {e}")
+        return None, e
 
 
 def _run_ffmpeg_loudnorm(audio_path: str, target_lufs: float, true_peak: float) -> Dict[str, Any]:
@@ -122,10 +156,8 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
         return "audio_metrics"
 
     def _config(self) -> Dict[str, Any]:
-        verification_cfg = config_manager.get("pipeline.verification", {})
-        layer_cfg = verification_cfg.get("layers", {}).get("audio_metrics", {})
-        return layer_cfg.get(
-            "thresholds",
+        return _layer_thresholds(
+            self.name,
             {
                 "target_lufs": -16.0,
                 "lufs_tolerance": 2.0,
@@ -143,7 +175,7 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
         language: str,
         expected_duration: float,
         context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> LayerResult:
         cfg = self._config()
         target_lufs = float(cfg.get("target_lufs", -16.0))
         lufs_tolerance = float(cfg.get("lufs_tolerance", 2.0))
@@ -189,12 +221,12 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
         else:
             score = 0.5  # Hard-fail layers get a baseline low score on failure.
 
-        return {
-            "passed": failure_reason is None,
-            "score": score,
-            "failure_reason": failure_reason,
-            "metrics": metrics,
-        }
+        return LayerResult(
+            passed=failure_reason is None,
+            score=score,
+            failure_reason=failure_reason,
+            metrics=metrics,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -231,13 +263,11 @@ def _run_whisperx_with_cache(
     # 'auto' internally). 'auto' keeps the wrapper portable.
     device = asr_config.get("device", "auto")
 
-    try:
-        from pipeline.verification_wrappers.runner import run_whisperx_align
-    except Exception as e:
-        logger.error(f"Failed to import WhisperX runner: {e}")
+    run_fn, import_error = _load_runner("run_whisperx_align", "WhisperX")
+    if run_fn is None:
         return None
 
-    result = run_whisperx_align(
+    result = run_fn(
         audio_path=audio_path,
         reference_text=original_text,
         language=language,
@@ -263,10 +293,8 @@ class WhisperXAlignmentVerifier(QualityVerifier):
         return "whisperx_alignment"
 
     def _config(self) -> Dict[str, Any]:
-        verification_cfg = config_manager.get("pipeline.verification", {})
-        layer_cfg = verification_cfg.get("layers", {}).get("whisperx_alignment", {})
-        return layer_cfg.get(
-            "thresholds",
+        return _layer_thresholds(
+            self.name,
             {
                 "min_mean_word_confidence": 0.70,
                 "min_text_coverage_ratio": 0.90,
@@ -281,7 +309,7 @@ class WhisperXAlignmentVerifier(QualityVerifier):
         language: str,
         expected_duration: float,
         context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> LayerResult:
         cfg = self._config()
         min_confidence = float(cfg.get("min_mean_word_confidence", 0.70))
         min_coverage = float(cfg.get("min_text_coverage_ratio", 0.90))
@@ -289,15 +317,15 @@ class WhisperXAlignmentVerifier(QualityVerifier):
         result = _run_whisperx_with_cache(audio_path, original_text, language, context)
 
         if result is None:
-            return {
-                "passed": False,
-                "score": 0.0,
-                "failure_reason": "whisperx_unavailable",
-                "metrics": {
+            return LayerResult(
+                passed=False,
+                score=0.0,
+                failure_reason="whisperx_unavailable",
+                metrics={
                     "min_mean_word_confidence": min_confidence,
                     "min_text_coverage_ratio": min_coverage,
                 },
-            }
+            )
 
         mean_confidence = float(result.get("mean_word_confidence", 0.0))
         coverage_ratio = float(result.get("text_coverage_ratio", 0.0))
@@ -325,12 +353,12 @@ class WhisperXAlignmentVerifier(QualityVerifier):
         else:
             score = 0.5
 
-        return {
-            "passed": failure_reason is None,
-            "score": score,
-            "failure_reason": failure_reason,
-            "metrics": metrics,
-        }
+        return LayerResult(
+            passed=failure_reason is None,
+            score=score,
+            failure_reason=failure_reason,
+            metrics=metrics,
+        )
 
 
 class JiwerContentVerifier(QualityVerifier):
@@ -350,10 +378,8 @@ class JiwerContentVerifier(QualityVerifier):
         return "jiwer_content"
 
     def _config(self) -> Dict[str, Any]:
-        verification_cfg = config_manager.get("pipeline.verification", {})
-        layer_cfg = verification_cfg.get("layers", {}).get("jiwer_content", {})
-        return layer_cfg.get(
-            "thresholds",
+        return _layer_thresholds(
+            self.name,
             {
                 "max_wer": 0.15,
                 "max_cer": 0.10,
@@ -376,7 +402,7 @@ class JiwerContentVerifier(QualityVerifier):
         language: str,
         expected_duration: float,
         context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> LayerResult:
         cfg = self._config()
         max_wer = float(cfg.get("max_wer", 0.15))
         max_cer = float(cfg.get("max_cer", 0.10))
@@ -384,30 +410,30 @@ class JiwerContentVerifier(QualityVerifier):
         result = _run_whisperx_with_cache(audio_path, original_text, language, context)
 
         if result is None:
-            return {
-                "passed": False,
-                "score": 0.0,
-                "failure_reason": "whisperx_unavailable",
-                "metrics": {
+            return LayerResult(
+                passed=False,
+                score=0.0,
+                failure_reason="whisperx_unavailable",
+                metrics={
                     "max_wer": max_wer,
                     "max_cer": max_cer,
                 },
-            }
+            )
 
         reference = result.get("normalized_reference", "")
         hypothesis = result.get("normalized_transcription", "")
 
         if jiwer is None:
             logger.error("jiwer is not available")
-            return {
-                "passed": False,
-                "score": 0.0,
-                "failure_reason": "jiwer_unavailable",
-                "metrics": {
+            return LayerResult(
+                passed=False,
+                score=0.0,
+                failure_reason="jiwer_unavailable",
+                metrics={
                     "max_wer": max_wer,
                     "max_cer": max_cer,
                 },
-            }
+            )
 
         cer = float(jiwer.cer(reference, hypothesis))
         wer_input_ref = self._prepare_for_wer(reference, language)
@@ -434,12 +460,12 @@ class JiwerContentVerifier(QualityVerifier):
         else:
             score = 0.5
 
-        return {
-            "passed": failure_reason is None,
-            "score": score,
-            "failure_reason": failure_reason,
-            "metrics": metrics,
-        }
+        return LayerResult(
+            passed=failure_reason is None,
+            score=score,
+            failure_reason=failure_reason,
+            metrics=metrics,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -460,9 +486,7 @@ class ResemblyzerSpeakerVerifier(QualityVerifier):
         return "resemblyzer_speaker"
 
     def _config(self) -> Dict[str, Any]:
-        verification_cfg = config_manager.get("pipeline.verification", {})
-        layer_cfg = verification_cfg.get("layers", {}).get("resemblyzer_speaker", {})
-        return layer_cfg.get("thresholds", {"min_similarity": 0.75})
+        return _layer_thresholds(self.name, {"min_similarity": 0.75})
 
     def verify(
         self,
@@ -472,68 +496,66 @@ class ResemblyzerSpeakerVerifier(QualityVerifier):
         language: str,
         expected_duration: float,
         context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> LayerResult:
         cfg = self._config()
         min_similarity = float(cfg.get("min_similarity", 0.75))
 
         if not reference_voice_path:
-            return {
-                "passed": True,
-                "score": 0.0,
-                "failure_reason": None,
-                "metrics": {
+            return LayerResult(
+                passed=True,
+                score=0.0,
+                failure_reason=None,
+                metrics={
                     "cosine_similarity": None,
                     "min_similarity": min_similarity,
                     "note": "no_reference_voice",
                 },
-            }
+            )
 
-        try:
-            from pipeline.verification_wrappers.runner import run_resemblyzer_speaker
-        except Exception as e:
-            logger.error(f"Failed to import Resemblyzer runner: {e}")
-            return {
-                "passed": True,
-                "score": 0.0,
-                "failure_reason": None,
-                "metrics": {
+        run_fn, import_error = _load_runner("run_resemblyzer_speaker", "Resemblyzer")
+        if run_fn is None:
+            return LayerResult(
+                passed=True,
+                score=0.0,
+                failure_reason=None,
+                metrics={
                     "cosine_similarity": None,
                     "min_similarity": min_similarity,
-                    "error": str(e),
+                    "error": str(import_error),
                 },
-            }
+            )
 
-        result = run_resemblyzer_speaker(
+        result = run_fn(
             audio_path=audio_path,
             reference_voice_path=reference_voice_path,
         )
 
         if result is None:
-            return {
-                "passed": True,
-                "score": 0.0,
-                "failure_reason": None,
-                "metrics": {
+            return LayerResult(
+                passed=True,
+                score=0.0,
+                failure_reason=None,
+                metrics={
                     "cosine_similarity": None,
                     "min_similarity": min_similarity,
                     "note": "resemblyzer_unavailable",
                 },
-            }
+            )
 
         similarity = float(result.get("cosine_similarity", 0.0))
         score = max(0.0, min(1.0, similarity))
 
-        return {
-            "passed": True,
-            "score": score,
-            "failure_reason": None,
-            "metrics": {
+        return LayerResult(
+            passed=True,
+            score=score,
+            failure_reason=None,
+            metrics={
                 "cosine_similarity": similarity,
                 "min_similarity": min_similarity,
                 "embedding_shape": result.get("embedding_shape"),
                 "reference_embedding_shape": result.get("reference_embedding_shape"),
             },
-        }
+        )
 
 
 class LibrosaSpectralVerifier(QualityVerifier):
@@ -550,10 +572,8 @@ class LibrosaSpectralVerifier(QualityVerifier):
         return "librosa_spectral"
 
     def _config(self) -> Dict[str, Any]:
-        verification_cfg = config_manager.get("pipeline.verification", {})
-        layer_cfg = verification_cfg.get("layers", {}).get("librosa_spectral", {})
-        return layer_cfg.get(
-            "thresholds",
+        return _layer_thresholds(
+            self.name,
             {"max_mfcc_mse": 0.05, "min_spectral_contrast": 0.80},
         )
 
@@ -565,70 +585,68 @@ class LibrosaSpectralVerifier(QualityVerifier):
         language: str,
         expected_duration: float,
         context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> LayerResult:
         cfg = self._config()
         max_mfcc_mse = float(cfg.get("max_mfcc_mse", 0.05))
         min_spectral_contrast = float(cfg.get("min_spectral_contrast", 0.80))
 
         if not reference_voice_path:
-            return {
-                "passed": True,
-                "score": 0.0,
-                "failure_reason": None,
-                "metrics": {
+            return LayerResult(
+                passed=True,
+                score=0.0,
+                failure_reason=None,
+                metrics={
                     "mfcc_mse": None,
                     "spectral_contrast_ratio": None,
                     "max_mfcc_mse": max_mfcc_mse,
                     "min_spectral_contrast": min_spectral_contrast,
                     "note": "no_reference_voice",
                 },
-            }
+            )
 
-        try:
-            from pipeline.verification_wrappers.runner import run_librosa_spectral
-        except Exception as e:
-            logger.error(f"Failed to import Librosa runner: {e}")
-            return {
-                "passed": True,
-                "score": 0.0,
-                "failure_reason": None,
-                "metrics": {
+        run_fn, import_error = _load_runner("run_librosa_spectral", "Librosa")
+        if run_fn is None:
+            return LayerResult(
+                passed=True,
+                score=0.0,
+                failure_reason=None,
+                metrics={
                     "mfcc_mse": None,
                     "spectral_contrast_ratio": None,
                     "max_mfcc_mse": max_mfcc_mse,
                     "min_spectral_contrast": min_spectral_contrast,
-                    "error": str(e),
+                    "error": str(import_error),
                 },
-            }
+            )
 
-        result = run_librosa_spectral(
+        result = run_fn(
             audio_path=audio_path,
             reference_voice_path=reference_voice_path,
         )
 
         if result is None:
-            return {
-                "passed": True,
-                "score": 0.0,
-                "failure_reason": None,
-                "metrics": {
+            return LayerResult(
+                passed=True,
+                score=0.0,
+                failure_reason=None,
+                metrics={
                     "mfcc_mse": None,
                     "spectral_contrast_ratio": None,
                     "max_mfcc_mse": max_mfcc_mse,
                     "min_spectral_contrast": min_spectral_contrast,
                     "note": "librosa_unavailable",
                 },
-            }
+            )
 
         mfcc_mse = float(result.get("mfcc_mse", 0.0))
         sc_ratio = float(result.get("spectral_contrast_ratio", 0.0))
         score = max(0.0, min(1.0, sc_ratio))
 
-        return {
-            "passed": True,
-            "score": score,
-            "failure_reason": None,
-            "metrics": {
+        return LayerResult(
+            passed=True,
+            score=score,
+            failure_reason=None,
+            metrics={
                 "mfcc_mse": mfcc_mse,
                 "spectral_contrast_ratio": sc_ratio,
                 "max_mfcc_mse": max_mfcc_mse,
@@ -636,4 +654,4 @@ class LibrosaSpectralVerifier(QualityVerifier):
                 "audio_duration_sec": result.get("audio_duration_sec"),
                 "reference_duration_sec": result.get("reference_duration_sec"),
             },
-        }
+        )

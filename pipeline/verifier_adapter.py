@@ -3,7 +3,7 @@
 from typing import Any, Dict, Optional
 
 from config import config_manager
-from pipeline.quality import QualityVerifier
+from pipeline.quality import LayerResult, QualityVerifier
 from pipeline.verifier import VerificationThresholds, verify_audio
 
 import soundfile as sf
@@ -24,7 +24,7 @@ class BasicAudioVerifierAdapter(QualityVerifier):
         language: str,
         expected_duration: float,
         context: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
+    ) -> LayerResult:
         audio, sr = sf.read(audio_path, dtype="float32")
         if audio.ndim > 1:
             audio = audio.mean(axis=1)
@@ -37,12 +37,12 @@ class BasicAudioVerifierAdapter(QualityVerifier):
             thresholds=thresholds,
         )
 
-        return {
-            "passed": result.passed,
-            "score": result.score,
-            "failure_reason": result.failure_reason,
-            "metrics": result.metrics,
-        }
+        return LayerResult(
+            passed=result.passed,
+            score=result.score,
+            failure_reason=result.failure_reason,
+            metrics=result.metrics,
+        )
 
     def _load_thresholds(self) -> VerificationThresholds:
         verification_cfg = config_manager.get("pipeline.verification", {})

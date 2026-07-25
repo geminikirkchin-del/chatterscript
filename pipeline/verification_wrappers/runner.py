@@ -47,53 +47,19 @@ def run_whisperx_align(
     Returns the parsed JSON dict, or None if the subprocess fails or the venv
     is not available.
     """
-    python_exe = find_verification_python(venv_dir)
-    if python_exe is None:
-        logger.warning(
-            f"Verification venv not found at {venv_dir or DEFAULT_VENV_DIR}. "
-            "Run: python scripts/setup_verification_env.py"
-        )
-        return None
-
-    script = _wrapper_script_path()
-    cmd = [
-        str(python_exe),
-        str(script),
-        "--audio", audio_path,
-        "--reference-text", reference_text,
-        "--language", language,
-        "--model", model_name,
-        "--device", device,
-    ]
-    logger.info(f"Running WhisperX alignment wrapper on {audio_path}")
-    try:
-        result = subprocess.run(
-            cmd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            check=False,
-            timeout=timeout,
-        )
-    except subprocess.TimeoutExpired:
-        logger.error(f"WhisperX alignment wrapper timed out after {timeout}s")
-        return None
-    except Exception as e:
-        logger.error(f"Failed to run WhisperX alignment wrapper: {e}")
-        return None
-
-    if result.returncode != 0:
-        logger.error(
-            f"WhisperX alignment wrapper failed (exit {result.returncode}):\n"
-            f"{result.stderr[-2000:]}"
-        )
-        return None
-
-    try:
-        return json.loads(result.stdout)
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse WhisperX wrapper output: {e}\n{result.stdout[-2000:]}")
-        return None
+    return _run_subprocess_wrapper(
+        script=_wrapper_script_path(),
+        cmd_args=[
+            "--audio", audio_path,
+            "--reference-text", reference_text,
+            "--language", language,
+            "--model", model_name,
+            "--device", device,
+        ],
+        label="WhisperX alignment",
+        timeout=timeout,
+        venv_dir=venv_dir,
+    )
 
 
 
@@ -110,11 +76,13 @@ def _run_subprocess_wrapper(
     cmd_args: list,
     label: str,
     timeout: Optional[int] = 300,
+    venv_dir: Optional[Path] = None,
 ) -> Optional[Dict[str, Any]]:
-    python_exe = find_verification_python()
+    python_exe = find_verification_python(venv_dir)
     if python_exe is None:
         logger.warning(
-            f"Verification venv not found. Run: python scripts/setup_verification_env.py"
+            f"Verification venv not found at {venv_dir or DEFAULT_VENV_DIR}. "
+            "Run: python scripts/setup_verification_env.py"
         )
         return None
 
