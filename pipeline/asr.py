@@ -12,11 +12,14 @@ import numpy as np
 logger = logging.getLogger(__name__)
 
 # Optional whisperx import — pipeline remains functional without it.
+# Compatibility: older pyannote.audio uses np.NaN, removed in NumPy 2.0.
+if not hasattr(np, "NaN"):
+    np.NaN = np.nan  # type: ignore[misc]
 try:
     import whisperx
 
     WHISPERX_AVAILABLE = True
-except ImportError:
+except Exception:
     whisperx = None
     WHISPERX_AVAILABLE = False
 
