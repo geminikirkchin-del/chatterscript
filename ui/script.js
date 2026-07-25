@@ -1828,6 +1828,18 @@ document.addEventListener('DOMContentLoaded', function () {
             if (seg.score !== null && seg.score !== undefined) scoreParts.push(`overall: ${formatScore(seg.score)}`);
             if (seg.audio_score !== null && seg.audio_score !== undefined) scoreParts.push(`audio: ${formatScore(seg.audio_score)}`);
             if (seg.asr_score !== null && seg.asr_score !== undefined) scoreParts.push(`asr: ${formatScore(seg.asr_score)}`);
+
+            // Audio metrics from the latest verification log entry.
+            const lastLog = seg.verification_log && seg.verification_log.length
+                ? seg.verification_log[seg.verification_log.length - 1]
+                : null;
+            const audioMetrics = lastLog?.quality?.layer_results?.audio_metrics?.metrics;
+            if (audioMetrics) {
+                if (audioMetrics.lufs !== undefined) scoreParts.push(`LUFS: ${formatScore(audioMetrics.lufs)}`);
+                if (audioMetrics.true_peak_dbtp !== undefined) scoreParts.push(`TP: ${formatScore(audioMetrics.true_peak_dbtp)} dBTP`);
+                if (audioMetrics.dynamic_range_db !== undefined) scoreParts.push(`DR: ${formatScore(audioMetrics.dynamic_range_db)} dB`);
+            }
+
             const scoreCell = document.createElement('td');
             scoreCell.textContent = scoreParts.join('\n') || '—';
             scoreCell.style.whiteSpace = 'pre-line';

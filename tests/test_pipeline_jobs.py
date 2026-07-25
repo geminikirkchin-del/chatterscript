@@ -31,8 +31,13 @@ def _make_fake_synthesize(sample_rate=24000):
             "language": language,
         })
         words = max(1, len(text.split()))
-        duration = words / 3.0
-        samples = np.full(int(duration * sample_rate), 0.3, dtype=np.float32)
+        duration = max(2.0, words / 3.0)
+        samples_count = int(duration * sample_rate)
+        t = np.linspace(0, duration, samples_count, dtype=np.float32)
+        # Amplitude-modulated tone so the audio metrics verifier sees realistic LUFS/dynamic range.
+        envelope = 0.25 + 0.15 * np.sin(2 * np.pi * 2 * t)
+        samples = envelope * np.sin(2 * np.pi * 440 * t)
+        samples = samples.astype(np.float32)
         return samples, sample_rate
 
     return fake_synthesize, calls
@@ -61,8 +66,10 @@ def test_run_job_happy_path_composes_final():
     try:
         fake, calls = _make_fake_synthesize()
         service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        # Use a longer text so the fake synthesized audio (>= 2s) aligns with the
+        # estimated duration and passes the audio-metrics dynamic-range check.
         job_id = service.submit_job(
-            text="Hello. World.",
+            text="Hello world, this is a longer test sentence for the pipeline job.",
             voice_config={"mode": "predefined", "voice_id": "test.wav"},
             gen_params={"temperature": 0.8, "language": "en"},
         )
@@ -71,7 +78,6 @@ def test_run_job_happy_path_composes_final():
         assert job.status == PipelineJobStatus.DONE, job.status
         assert job.final_audio_path is not None
         assert Path(job.final_audio_path).exists()
-        # Two very short sentences are merged into one segment.
         assert len(calls) >= 1, calls
     finally:
         shutil.rmtree(tmp, ignore_errors=True)

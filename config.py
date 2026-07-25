@@ -111,10 +111,58 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "pause_ms": 150,  # Silence inserted between segments in milliseconds.
         "max_retry_count": 3,  # Retry attempts per failed segment.
         "verification": {  # Audio + ASR verification thresholds
+            # Legacy thresholds used by the basic audio verifier layer.
             "max_silence_ms": 500,
             "clip_threshold": 0.99,
             "min_rms": 0.01,
             "max_duration_deviation": 0.50,
+            # Per-layer configuration for the multi-layer quality verifier.
+            "layers": {
+                "audio_metrics": {
+                    "enabled": True,
+                    "hardfail": True,
+                    "thresholds": {
+                        "target_lufs": -16.0,
+                        "lufs_tolerance": 2.0,
+                        # Per-segment peak limit. Raw TTS often sits near 0 dBFS, so the
+                        # segment threshold is lenient; final compose applies loudnorm.
+                        "true_peak_max_dbtp": 0.5,
+                        "min_rms": 0.01,
+                        "min_dynamic_range_db": 10.0,
+                    },
+                },
+                "whisperx_alignment": {
+                    "enabled": True,
+                    "hardfail": True,
+                    "thresholds": {
+                        "min_mean_word_confidence": 0.70,
+                        "min_text_coverage_ratio": 0.90,
+                    },
+                },
+                "jiwer_content": {
+                    "enabled": True,
+                    "hardfail": True,
+                    "thresholds": {
+                        "max_wer": 0.15,
+                        "max_cer": 0.10,
+                    },
+                },
+                "resemblyzer_speaker": {
+                    "enabled": True,
+                    "hardfail": False,
+                    "thresholds": {
+                        "min_similarity": 0.75,
+                    },
+                },
+                "librosa_spectral": {
+                    "enabled": True,
+                    "hardfail": False,
+                    "thresholds": {
+                        "max_mfcc_mse": 0.05,
+                        "min_spectral_contrast": 0.80,
+                    },
+                },
+            },
         },
         "asr": {  # whisperx ASR settings
             "enabled": True,

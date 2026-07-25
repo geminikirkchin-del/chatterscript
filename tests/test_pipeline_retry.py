@@ -24,8 +24,13 @@ def _make_synthesize_with_failures(fail_indices, sample_rate=24000):
             return None, None
         # Generate audio duration roughly matching word count to pass duration check.
         words = max(1, len(text.split()))
-        duration = words / 3.0
-        samples = np.full(int(duration * sample_rate), 0.3, dtype=np.float32)
+        duration = max(2.0, words / 3.0)
+        samples_count = int(duration * sample_rate)
+        t = np.linspace(0, duration, samples_count, dtype=np.float32)
+        # Amplitude-modulated tone so the audio metrics verifier sees realistic LUFS/dynamic range.
+        envelope = 0.25 + 0.15 * np.sin(2 * np.pi * 2 * t)
+        samples = envelope * np.sin(2 * np.pi * 440 * t)
+        samples = samples.astype(np.float32)
         return samples, sample_rate
 
     return fake_synthesize, calls
@@ -37,8 +42,10 @@ def test_failed_segment_retried_then_passes():
         # First call fails, subsequent calls succeed.
         fake, calls = _make_synthesize_with_failures(fail_indices={0})
         service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        # Use a longer sentence so the fake synthesized audio aligns with the
+        # estimated duration and passes the audio-metrics checks.
         job_id = service.submit_job(
-            text="One. Two.",
+            text="This is a longer test sentence that will be synthesized successfully after one retry.",
             voice_config={"mode": "predefined", "voice_id": "test.wav"},
             gen_params={"temperature": 0.8, "language": "en"},
         )

@@ -44,9 +44,9 @@ def test_clipping_audio_fails():
 
 def test_long_internal_silence_fails():
     sr = 24000
-    # 0.3s tone, 0.5s silence, 0.2s tone -> 500ms silence > 300ms threshold
-    tone = 0.3 * np.ones(int(0.3 * sr), dtype=np.float32)
-    silence = np.zeros(int(0.5 * sr), dtype=np.float32)
+    # 0.2s tone, 0.6s silence, 0.2s tone -> 600ms silence exceeds default 500ms threshold.
+    tone = 0.3 * np.ones(int(0.2 * sr), dtype=np.float32)
+    silence = np.zeros(int(0.6 * sr), dtype=np.float32)
     tail = 0.3 * np.ones(int(0.2 * sr), dtype=np.float32)
     audio = np.concatenate([tone, silence, tail])
     result = verify_audio(audio, sr, expected_duration=1.0)
