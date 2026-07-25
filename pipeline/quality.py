@@ -105,7 +105,16 @@ class PipelineQualityVerifier:
 
             layers.append(JiwerContentVerifier())
 
-        # Speaker + spectral feedback layers are added by later tickets.
+        # Speaker + spectral feedback layers (feedback-only by default).
+        if layer_config.get("resemblyzer_speaker", {}).get("enabled", True):
+            from pipeline.quality_layers import ResemblyzerSpeakerVerifier
+
+            layers.append(ResemblyzerSpeakerVerifier())
+
+        if layer_config.get("librosa_spectral", {}).get("enabled", True):
+            from pipeline.quality_layers import LibrosaSpectralVerifier
+
+            layers.append(LibrosaSpectralVerifier())
 
         return cls(layers=layers, layer_config=layer_config)
 

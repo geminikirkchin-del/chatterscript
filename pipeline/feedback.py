@@ -88,3 +88,37 @@ class FeedbackStore:
             for fb in self.read_recent(limit=10000)
             if fb.job_id == job_id and fb.segment_index == segment_index
         ]
+
+    def append_metrics(
+        self,
+        job_id: str,
+        segment_index: int,
+        layer_results: Dict[str, Any],
+        gen_params: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        Persist quality verification metrics for a segment.
+
+        These entries have rating="metrics" and store the per-layer results so
+        the agent can learn which parameter combinations produce good speaker /
+        spectral similarity.
+        """
+        feedback = SegmentFeedback(
+            job_id=job_id,
+            segment_index=segment_index,
+            rating="metrics",
+            comment=None,
+            extra={
+                "layer_results": layer_results,
+                "gen_params": gen_params or {},
+            },
+        )
+        return self.append(feedback)
+
+    def read_recent_metrics(self, limit: int = 200) -> List[SegmentFeedback]:
+        """Return the most recent metrics-only feedback entries."""
+        return [
+            fb
+            for fb in self.read_recent(limit=limit)
+            if fb.rating == "metrics"
+        ]

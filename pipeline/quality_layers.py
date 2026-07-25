@@ -440,3 +440,200 @@ class JiwerContentVerifier(QualityVerifier):
             "failure_reason": failure_reason,
             "metrics": metrics,
         }
+
+
+# ---------------------------------------------------------------------------
+# Ticket 03: Speaker + spectral feedback layers (feedback-only)
+# ---------------------------------------------------------------------------
+
+
+class ResemblyzerSpeakerVerifier(QualityVerifier):
+    """
+    Feedback-only speaker similarity verifier using Resemblyzer.
+
+    Compares the generated segment's voice embedding to the reference voice
+    embedding. Does not hard-fail the segment; metrics feed the feedback loop.
+    """
+
+    @property
+    def name(self) -> str:
+        return "resemblyzer_speaker"
+
+    def _config(self) -> Dict[str, Any]:
+        verification_cfg = config_manager.get("pipeline.verification", {})
+        layer_cfg = verification_cfg.get("layers", {}).get("resemblyzer_speaker", {})
+        return layer_cfg.get("thresholds", {"min_similarity": 0.75})
+
+    def verify(
+        self,
+        audio_path: str,
+        original_text: str,
+        reference_voice_path: Optional[str],
+        language: str,
+        expected_duration: float,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        cfg = self._config()
+        min_similarity = float(cfg.get("min_similarity", 0.75))
+
+        if not reference_voice_path:
+            return {
+                "passed": True,
+                "score": 0.0,
+                "failure_reason": None,
+                "metrics": {
+                    "cosine_similarity": None,
+                    "min_similarity": min_similarity,
+                    "note": "no_reference_voice",
+                },
+            }
+
+        try:
+            from pipeline.verification_wrappers.runner import run_resemblyzer_speaker
+        except Exception as e:
+            logger.error(f"Failed to import Resemblyzer runner: {e}")
+            return {
+                "passed": True,
+                "score": 0.0,
+                "failure_reason": None,
+                "metrics": {
+                    "cosine_similarity": None,
+                    "min_similarity": min_similarity,
+                    "error": str(e),
+                },
+            }
+
+        result = run_resemblyzer_speaker(
+            audio_path=audio_path,
+            reference_voice_path=reference_voice_path,
+        )
+
+        if result is None:
+            return {
+                "passed": True,
+                "score": 0.0,
+                "failure_reason": None,
+                "metrics": {
+                    "cosine_similarity": None,
+                    "min_similarity": min_similarity,
+                    "note": "resemblyzer_unavailable",
+                },
+            }
+
+        similarity = float(result.get("cosine_similarity", 0.0))
+        score = max(0.0, min(1.0, similarity))
+
+        return {
+            "passed": True,
+            "score": score,
+            "failure_reason": None,
+            "metrics": {
+                "cosine_similarity": similarity,
+                "min_similarity": min_similarity,
+                "embedding_shape": result.get("embedding_shape"),
+                "reference_embedding_shape": result.get("reference_embedding_shape"),
+            },
+        }
+
+
+class LibrosaSpectralVerifier(QualityVerifier):
+    """
+    Feedback-only spectral verifier using Librosa.
+
+    Computes MFCC MSE and spectral contrast ratio between generated segment and
+    reference voice. Does not hard-fail the segment; metrics feed the feedback
+    loop.
+    """
+
+    @property
+    def name(self) -> str:
+        return "librosa_spectral"
+
+    def _config(self) -> Dict[str, Any]:
+        verification_cfg = config_manager.get("pipeline.verification", {})
+        layer_cfg = verification_cfg.get("layers", {}).get("librosa_spectral", {})
+        return layer_cfg.get(
+            "thresholds",
+            {"max_mfcc_mse": 0.05, "min_spectral_contrast": 0.80},
+        )
+
+    def verify(
+        self,
+        audio_path: str,
+        original_text: str,
+        reference_voice_path: Optional[str],
+        language: str,
+        expected_duration: float,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        cfg = self._config()
+        max_mfcc_mse = float(cfg.get("max_mfcc_mse", 0.05))
+        min_spectral_contrast = float(cfg.get("min_spectral_contrast", 0.80))
+
+        if not reference_voice_path:
+            return {
+                "passed": True,
+                "score": 0.0,
+                "failure_reason": None,
+                "metrics": {
+                    "mfcc_mse": None,
+                    "spectral_contrast_ratio": None,
+                    "max_mfcc_mse": max_mfcc_mse,
+                    "min_spectral_contrast": min_spectral_contrast,
+                    "note": "no_reference_voice",
+                },
+            }
+
+        try:
+            from pipeline.verification_wrappers.runner import run_librosa_spectral
+        except Exception as e:
+            logger.error(f"Failed to import Librosa runner: {e}")
+            return {
+                "passed": True,
+                "score": 0.0,
+                "failure_reason": None,
+                "metrics": {
+                    "mfcc_mse": None,
+                    "spectral_contrast_ratio": None,
+                    "max_mfcc_mse": max_mfcc_mse,
+                    "min_spectral_contrast": min_spectral_contrast,
+                    "error": str(e),
+                },
+            }
+
+        result = run_librosa_spectral(
+            audio_path=audio_path,
+            reference_voice_path=reference_voice_path,
+        )
+
+        if result is None:
+            return {
+                "passed": True,
+                "score": 0.0,
+                "failure_reason": None,
+                "metrics": {
+                    "mfcc_mse": None,
+                    "spectral_contrast_ratio": None,
+                    "max_mfcc_mse": max_mfcc_mse,
+                    "min_spectral_contrast": min_spectral_contrast,
+                    "note": "librosa_unavailable",
+                },
+            }
+
+        mfcc_mse = float(result.get("mfcc_mse", 0.0))
+        sc_ratio = float(result.get("spectral_contrast_ratio", 0.0))
+        score = max(0.0, min(1.0, sc_ratio))
+
+        return {
+            "passed": True,
+            "score": score,
+            "failure_reason": None,
+            "metrics": {
+                "mfcc_mse": mfcc_mse,
+                "spectral_contrast_ratio": sc_ratio,
+                "max_mfcc_mse": max_mfcc_mse,
+                "min_spectral_contrast": min_spectral_contrast,
+                "audio_duration_sec": result.get("audio_duration_sec"),
+                "reference_duration_sec": result.get("reference_duration_sec"),
+            },
+        }

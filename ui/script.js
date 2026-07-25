@@ -1852,6 +1852,21 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (jiwerMetrics.cer !== undefined) scoreParts.push(`CER: ${formatScore(jiwerMetrics.cer)}`);
             }
 
+            const speakerMetrics = lastLog?.quality?.layer_results?.resemblyzer_speaker?.metrics;
+            if (speakerMetrics && speakerMetrics.cosine_similarity !== undefined && speakerMetrics.cosine_similarity !== null) {
+                scoreParts.push(`Spk: ${formatScore(speakerMetrics.cosine_similarity)}`);
+            }
+
+            const spectralMetrics = lastLog?.quality?.layer_results?.librosa_spectral?.metrics;
+            if (spectralMetrics) {
+                if (spectralMetrics.mfcc_mse !== undefined && spectralMetrics.mfcc_mse !== null) {
+                    scoreParts.push(`MFCC: ${formatScore(spectralMetrics.mfcc_mse)}`);
+                }
+                if (spectralMetrics.spectral_contrast_ratio !== undefined && spectralMetrics.spectral_contrast_ratio !== null) {
+                    scoreParts.push(`SC: ${formatScore(spectralMetrics.spectral_contrast_ratio)}`);
+                }
+            }
+
             const scoreCell = document.createElement('td');
             scoreCell.textContent = scoreParts.join('\n') || '—';
             scoreCell.style.whiteSpace = 'pre-line';

@@ -459,3 +459,104 @@ class TestWhisperXContextSharing:
                 context=context,
             )
             assert call_count["n"] == 1, "WhisperX should only run once per segment"
+
+
+# ---------------------------------------------------------------------------
+# Ticket 03: Speaker + spectral feedback layers
+# ---------------------------------------------------------------------------
+
+
+class TestResemblyzerSpeakerVerifier:
+    def test_passes_feedback_only_with_similarity(self, monkeypatch):
+        from pipeline.quality_layers import ResemblyzerSpeakerVerifier
+
+        def fake_run(audio_path, reference_voice_path):
+            return {"cosine_similarity": 0.82, "embedding_shape": [256]}
+
+        monkeypatch.setattr(
+            "pipeline.verification_wrappers.runner.run_resemblyzer_speaker", fake_run
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = ResemblyzerSpeakerVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=str(path),
+                language="en",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is True
+            assert result["score"] == 0.82
+            assert result["metrics"]["cosine_similarity"] == 0.82
+
+    def test_no_reference_voice_returns_zero_score(self):
+        from pipeline.quality_layers import ResemblyzerSpeakerVerifier
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = ResemblyzerSpeakerVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=None,
+                language="en",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is True
+            assert result["score"] == 0.0
+            assert result["metrics"]["cosine_similarity"] is None
+
+
+class TestLibrosaSpectralVerifier:
+    def test_passes_feedback_only_with_metrics(self, monkeypatch):
+        from pipeline.quality_layers import LibrosaSpectralVerifier
+
+        def fake_run(audio_path, reference_voice_path):
+            return {
+                "mfcc_mse": 0.03,
+                "spectral_contrast_ratio": 0.85,
+                "audio_duration_sec": 2.0,
+                "reference_duration_sec": 2.0,
+            }
+
+        monkeypatch.setattr(
+            "pipeline.verification_wrappers.runner.run_librosa_spectral", fake_run
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = LibrosaSpectralVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=str(path),
+                language="en",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is True
+            assert result["score"] == 0.85
+            assert result["metrics"]["mfcc_mse"] == 0.03
+            assert result["metrics"]["spectral_contrast_ratio"] == 0.85
+
+    def test_no_reference_voice_returns_zero_score(self):
+        from pipeline.quality_layers import LibrosaSpectralVerifier
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = LibrosaSpectralVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=None,
+                language="en",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is True
+            assert result["score"] == 0.0
+            assert result["metrics"]["mfcc_mse"] is None

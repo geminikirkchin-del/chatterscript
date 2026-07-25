@@ -478,6 +478,17 @@ class PipelineService:
 
         seg_record.verification_log.append(log_entry)
 
+        # Persist per-layer metrics to the feedback store for the agent loop.
+        try:
+            self.feedback_store.append_metrics(
+                job_id=job.job_id,
+                segment_index=seg_record.index,
+                layer_results=quality_result.layer_results,
+                gen_params=seg_record.gen_params,
+            )
+        except Exception as e:
+            logger.warning(f"Failed to append metrics to feedback store: {e}")
+
         # Extract audio metrics from the basic audio layer for agent feedback.
         basic_layer = quality_result.layer_results.get("basic_audio", {})
         audio_metrics = basic_layer.get("metrics", {})
