@@ -1645,21 +1645,15 @@ async def submit_pipeline_feedback(job_id: str, request: PipelineFeedbackRequest
             detail=f"Segment {request.segment_index} not found in job '{job_id}'.",
         )
     seg = job.segments[request.segment_index]
-    from pipeline.feedback import SegmentFeedback
-
-    ok = pipeline_service.feedback_store.append(
-        SegmentFeedback(
-            job_id=job_id,
-            segment_index=request.segment_index,
-            rating=request.rating,
-            comment=request.comment,
-            extra={
-                "segment_text": seg.text,
-                "params": seg.gen_params,
-                "score": seg.score,
-                "failure_reason": seg.failure_reason,
-            },
-        )
+    ok = pipeline_service.feedback_store.append_user_feedback(
+        job_id=job_id,
+        segment_index=request.segment_index,
+        rating=request.rating,
+        comment=request.comment,
+        gen_params=seg.gen_params,
+        segment_text=seg.text,
+        score=seg.score,
+        failure_reason=seg.failure_reason,
     )
     if not ok:
         raise HTTPException(status_code=500, detail="Failed to save feedback.")

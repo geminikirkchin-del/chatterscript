@@ -14,9 +14,10 @@ logger = logging.getLogger(__name__)
 class SegmentFeedback:
     job_id: str
     segment_index: int
-    rating: str  # "approve", "reject", or numeric score string
+    rating: str  # "approve"/"reject" for user feedback; "metrics" kept for backward compat
     comment: Optional[str] = None
     timestamp: Optional[float] = None
+    kind: str = "feedback"  # "feedback" (user ratings) or "metrics"
     extra: Dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -26,18 +27,29 @@ class SegmentFeedback:
             "rating": self.rating,
             "comment": self.comment,
             "timestamp": self.timestamp,
+            "kind": self.kind,
             "extra": self.extra,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "SegmentFeedback":
+        rating = data["rating"]
+        # Migrate legacy entries: rating == "metrics" with no kind means a
+        # metrics entry; legacy extra key "params" is renamed to "gen_params".
+        kind = data.get("kind")
+        if not kind:
+            kind = "metrics" if rating == "metrics" else "feedback"
+        extra = dict(data.get("extra", {}))
+        if "params" in extra and "gen_params" not in extra:
+            extra["gen_params"] = extra.pop("params")
         return cls(
             job_id=data["job_id"],
             segment_index=data["segment_index"],
-            rating=data["rating"],
+            rating=rating,
             comment=data.get("comment"),
             timestamp=data.get("timestamp"),
-            extra=data.get("extra", {}),
+            kind=kind,
+            extra=extra,
         )
 
 
@@ -99,18 +111,51 @@ class FeedbackStore:
         """
         Persist quality verification metrics for a segment.
 
-        These entries have rating="metrics" and store the per-layer results so
-        the agent can learn which parameter combinations produce good speaker /
-        spectral similarity.
+        These entries have kind="metrics" (rating="metrics" is kept for backward
+        compatibility) and store the per-layer results so the agent can learn
+        which parameter combinations produce good speaker / spectral similarity.
         """
         feedback = SegmentFeedback(
             job_id=job_id,
             segment_index=segment_index,
             rating="metrics",
             comment=None,
+            kind="metrics",
             extra={
                 "layer_results": layer_results,
                 "gen_params": gen_params or {},
+            },
+        )
+        return self.append(feedback)
+
+    def append_user_feedback(
+        self,
+        job_id: str,
+        segment_index: int,
+        rating: str,
+        comment: Optional[str],
+        gen_params: Optional[Dict[str, Any]],
+        segment_text: Optional[str],
+        score: Optional[float],
+        failure_reason: Optional[str],
+    ) -> bool:
+        """
+        Persist a user rating (approve/reject) for a segment.
+
+        The store owns the schema: callers pass plain fields and the entry is
+        built here with kind="feedback" and a normalized extra dict.
+        """
+        feedback = SegmentFeedback(
+            job_id=job_id,
+            segment_index=segment_index,
+            rating=rating,
+            comment=comment,
+            kind="feedback",
+            extra={
+                "gen_params": gen_params or {},
+                "segment_text": segment_text,
+                "score": score,
+                "failure_reason": failure_reason,
             },
         )
         return self.append(feedback)
@@ -120,5 +165,5 @@ class FeedbackStore:
         return [
             fb
             for fb in self.read_recent(limit=limit)
-            if fb.rating == "metrics"
+            if fb.kind == "metrics" or fb.rating == "metrics"
         ]

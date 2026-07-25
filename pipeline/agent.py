@@ -86,8 +86,11 @@ class ParameterAgent:
             recent = self.feedback_store.read_recent(limit=200)
             sig = _params_signature(params)
             for fb in recent:
-                rejected_params = fb.extra.get("gen_params") or fb.extra.get("params", {})
-                if fb.rating == "reject" and _params_signature(rejected_params) == sig:
+                if fb.kind != "feedback" or fb.rating != "reject":
+                    continue
+                # The store normalizes legacy "params" to "gen_params" on read.
+                rejected_params = fb.extra.get("gen_params", {})
+                if _params_signature(rejected_params) == sig:
                     return True
         except Exception as e:
             logger.warning(f"Failed to read feedback for agent: {e}")
