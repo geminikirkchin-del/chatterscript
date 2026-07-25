@@ -32,12 +32,21 @@ def _make_passing_quality_verifier():
     return PassingQualityVerifier()
 
 
+def _failed_quality(failure_reason: str) -> QualityVerificationResult:
+    """Build a failed quality result with the given failure reason."""
+    return QualityVerificationResult(
+        passed=False,
+        overall_score=0.0,
+        failure_reason=failure_reason,
+        layer_results={},
+    )
+
+
 def test_agent_lowers_temperature_on_asr_mismatch():
     agent = ParameterAgent()
     decision = agent.decide(
         base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
-        audio_failure=None,
-        asr_failure="asr_mismatch",
+        quality_result=_failed_quality("asr_mismatch"),
     )
     assert decision.gen_params["temperature"] < 0.8
     assert decision.gen_params["cfg_weight"] > 0.5
@@ -49,8 +58,7 @@ def test_agent_lowers_exaggeration_on_silence():
     agent = ParameterAgent()
     decision = agent.decide(
         base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
-        audio_failure="long_silence",
-        asr_failure=None,
+        quality_result=_failed_quality("long_silence"),
     )
     assert decision.gen_params["exaggeration"] < 0.5
     assert decision.gen_params["seed"] != 0
@@ -60,8 +68,7 @@ def test_agent_lowers_exaggeration_on_clipping():
     agent = ParameterAgent()
     decision = agent.decide(
         base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
-        audio_failure="clipping",
-        asr_failure=None,
+        quality_result=_failed_quality("clipping"),
     )
     assert decision.gen_params["exaggeration"] < 0.5
 
@@ -71,8 +78,7 @@ def test_agent_respects_parameter_bounds():
     # Temperature already low, should not go below 0.1
     decision = agent.decide(
         base_params={"temperature": 0.1, "cfg_weight": 1.0, "exaggeration": 0.25, "seed": 0},
-        audio_failure=None,
-        asr_failure="asr_mismatch",
+        quality_result=_failed_quality("asr_mismatch"),
     )
     assert decision.gen_params["temperature"] >= 0.1
     assert decision.gen_params["cfg_weight"] <= 1.0
@@ -160,8 +166,7 @@ def test_agent_lowers_temperature_on_whisperx_low_confidence():
     agent = ParameterAgent()
     decision = agent.decide(
         base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
-        audio_failure=None,
-        asr_failure="whisperx_low_confidence",
+        quality_result=_failed_quality("whisperx_low_confidence"),
     )
     assert decision.gen_params["temperature"] < 0.8
     assert decision.gen_params["cfg_weight"] > 0.5
@@ -172,8 +177,7 @@ def test_agent_lowers_temperature_on_wer_too_high():
     agent = ParameterAgent()
     decision = agent.decide(
         base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
-        audio_failure=None,
-        asr_failure="wer_too_high",
+        quality_result=_failed_quality("wer_too_high"),
     )
     assert decision.gen_params["temperature"] < 0.8
     assert decision.gen_params["cfg_weight"] > 0.5
@@ -189,8 +193,7 @@ def test_agent_adjusts_for_low_speaker_similarity():
     }
     decision = agent.decide(
         base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
-        audio_failure=None,
-        asr_failure=None,
+        quality_result=None,
         layer_results=layer_results,
     )
     assert decision.gen_params["temperature"] < 0.8
@@ -208,8 +211,7 @@ def test_agent_adjusts_for_spectral_drift():
     }
     decision = agent.decide(
         base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
-        audio_failure=None,
-        asr_failure=None,
+        quality_result=None,
         layer_results=layer_results,
     )
     assert decision.gen_params["exaggeration"] < 0.5

@@ -21,6 +21,7 @@ from pipeline.composer import compose_segments, loudnorm_final_audio
 from pipeline.feedback import FeedbackStore
 from pipeline.generator import generate_segment_audio
 from pipeline.models import (
+    AttemptResult,
     PipelineJob,
     PipelineJobStatus,
     PipelineJobSummary,
@@ -30,7 +31,6 @@ from pipeline.models import (
 from pipeline.quality import PipelineQualityVerifier, QualityVerificationResult
 from pipeline.segmenter import estimate_segment_duration, split_text_into_segments
 from pipeline.store import JobStore
-from pipeline.verifier import VerificationThresholds, verify_audio
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +248,7 @@ class PipelineService:
         language: str = "en",
     ) -> Optional[Path]:
         """
-        Generate one segment, retry on failure, verify audio + ASR quality, return path.
+        Generate one segment, retry on failure, verify quality, return path.
 
         Phase 1: base retries with original parameters.
         Phase 2: agent-adjusted parameters after base retries are exhausted.
@@ -263,72 +263,52 @@ class PipelineService:
         max_retries = job.pipeline_config.get(
             "max_retry_count", get_pipeline_max_retry_count()
         )
-        thresholds = self._load_verification_thresholds()
         quality_verifier = self._get_quality_verifier()
         agent = self._get_parameter_agent()
-        reference_voice_path = audio_prompt_path
 
-        # Track the last verification failures and metrics to feed the agent.
-        last_audio_failure: Optional[str] = None
-        last_asr_failure: Optional[str] = None
-        last_audio_metrics: Dict[str, Any] = {}
-        last_quality_result: Optional[QualityVerificationResult] = None
+        # Track the last attempt to feed the agent in Phase 2.
+        last_attempt: Optional[AttemptResult] = None
 
         # Phase 1: base retries.
         for attempt in range(max_retries + 1):
-            (
-                passed,
-                audio_failure,
-                asr_failure,
-                audio_metrics,
-                quality_result,
-            ) = self._attempt_segment(
+            result = self._attempt_segment(
                 job=job,
                 seg_record=seg_record,
                 audio_prompt_path=audio_prompt_path,
-                reference_voice_path=reference_voice_path,
                 expected_duration=expected_duration,
                 synthesize_fn=synthesize_fn,
                 language=language,
                 seg_path=seg_path,
-                thresholds=thresholds,
                 quality_verifier=quality_verifier,
                 attempt=attempt,
                 agent_decision=None,
             )
-            if passed:
+            if result.passed:
                 return seg_path
-            if audio_failure:
-                last_audio_failure = audio_failure
-                last_audio_metrics = audio_metrics or {}
-            if asr_failure:
-                last_asr_failure = asr_failure
-            last_quality_result = quality_result
+            last_attempt = result
 
         # Phase 2: agent-adjusted attempt.
+        last_quality = last_attempt.quality_result if last_attempt else None
         decision = agent.decide(
             base_params=seg_record.gen_params,
-            audio_failure=last_audio_failure,
-            asr_failure=last_asr_failure,
-            audio_metrics=last_audio_metrics,
-            layer_results=last_quality_result.layer_results if last_quality_result else None,
+            quality_result=last_quality,
+            audio_metrics=last_attempt.audio_metrics if last_attempt else None,
+            layer_results=last_quality.layer_results if last_quality else None,
         )
         seg_record.gen_params = decision.gen_params
-        passed, _, _, _, _ = self._attempt_segment(
+        result = self._attempt_segment(
             job=job,
             seg_record=seg_record,
             audio_prompt_path=audio_prompt_path,
-            reference_voice_path=reference_voice_path,
             expected_duration=expected_duration,
             synthesize_fn=synthesize_fn,
             language=language,
             seg_path=seg_path,
-            thresholds=thresholds,
             quality_verifier=quality_verifier,
             attempt=max_retries + 1,
             agent_decision=decision,
         )
-        if passed:
+        if result.passed:
             return seg_path
 
         seg_record.status = SegmentStatus.FAILED
@@ -343,20 +323,19 @@ class PipelineService:
         job: PipelineJob,
         seg_record: Segment,
         audio_prompt_path: Optional[str],
-        reference_voice_path: Optional[str],
         expected_duration: float,
         synthesize_fn: SynthesizeFn,
         language: str,
         seg_path: Path,
-        thresholds: VerificationThresholds,
         quality_verifier: PipelineQualityVerifier,
         attempt: int,
         agent_decision: Optional[AgentDecision],
-    ) -> Tuple[bool, Optional[str], Optional[str], Dict[str, Any], QualityVerificationResult]:
+    ) -> AttemptResult:
         """
         Single generation + verification attempt.
 
-        Returns (passed, audio_failure_reason, asr_failure_reason, audio_metrics, quality_result).
+        Returns an AttemptResult with the pass flag, the aggregated quality
+        result, and the basic audio metrics for agent feedback.
         """
         job_id = job.job_id
         seg_record.status = SegmentStatus.GENERATING
@@ -391,46 +370,24 @@ class PipelineService:
                 failure_reason="generation returned no audio",
                 layer_results={},
             )
-            return False, None, None, {}, empty_quality
+            return AttemptResult(passed=False, quality_result=empty_quality)
 
         sf.write(str(seg_path), audio_np, sr, subtype="pcm_16")
 
-        # Failure reasons produced by ASR/content quality layers. These are treated
-        # as content failures and routed to the agent's ASR adjustment rules.
-        CONTENT_FAILURE_REASONS = {
-            "whisperx_low_confidence",
-            "text_coverage_low",
-            "wer_too_high",
-            "cer_too_high",
-            "asr_mismatch",
-            "asr_transcription_failed",
-        }
-
-        # Run the multi-layer quality verifier (basic audio + audio metrics + ASR).
+        # Run the multi-layer quality verifier (basic audio + audio metrics + content).
+        # The audio prompt doubles as the reference voice for speaker-similarity layers.
         quality_result = quality_verifier.verify(
             audio_path=str(seg_path),
             original_text=seg_record.text,
-            reference_voice_path=reference_voice_path,
+            reference_voice_path=audio_prompt_path,
             language=language,
             expected_duration=expected_duration,
         )
 
-        combined_passed = quality_result.passed
-        combined_score = quality_result.overall_score
-        failure_reason = quality_result.failure_reason
-
-        # Categorize the quality failure so the agent applies the right rules.
-        audio_failure: Optional[str] = None
-        asr_failure: Optional[str] = None
-        if failure_reason in CONTENT_FAILURE_REASONS:
-            asr_failure = failure_reason
-        else:
-            audio_failure = failure_reason
-
         log_entry: Dict[str, Any] = {
             "attempt": attempt,
-            "passed": combined_passed,
-            "score": combined_score,
+            "passed": quality_result.passed,
+            "score": quality_result.overall_score,
             "quality": {
                 "passed": quality_result.passed,
                 "overall_score": quality_result.overall_score,
@@ -462,34 +419,27 @@ class PipelineService:
         basic_layer = quality_result.layer_results.get("basic_audio", {})
         audio_metrics = basic_layer.get("metrics", {})
 
-        if combined_passed:
+        if quality_result.passed:
             seg_record.status = SegmentStatus.PASSED
             seg_record.audio_path = str(seg_path)
             seg_record.audio_score = quality_result.overall_score
-            seg_record.score = combined_score
+            seg_record.score = quality_result.overall_score
             seg_record.failure_reason = None
             seg_record.retry_count = attempt
             self.store.save(job)
-            return True, None, None, audio_metrics, quality_result
+            return AttemptResult(
+                passed=True, quality_result=quality_result, audio_metrics=audio_metrics
+            )
 
         seg_record.retry_count = attempt
-        seg_record.failure_reason = failure_reason
+        seg_record.failure_reason = quality_result.failure_reason
         self.store.save(job)
         logger.warning(
             f"Job {job_id} segment {seg_record.index} attempt {attempt} failed: "
-            f"{failure_reason}"
+            f"{quality_result.failure_reason}"
         )
-        return False, audio_failure, asr_failure, audio_metrics, quality_result
-
-    def _load_verification_thresholds(self) -> VerificationThresholds:
-        from config import get_pipeline_verification_thresholds
-
-        cfg = get_pipeline_verification_thresholds()
-        return VerificationThresholds(
-            max_silence_ms=cfg.get("max_silence_ms", 500.0),
-            clip_threshold=cfg.get("clip_threshold", 0.99),
-            min_rms=cfg.get("min_rms", 0.01),
-            max_duration_deviation=cfg.get("max_duration_deviation", 0.50),
+        return AttemptResult(
+            passed=False, quality_result=quality_result, audio_metrics=audio_metrics
         )
 
     def _resolve_audio_prompt_path(self, voice_config: Dict[str, Any]) -> Optional[str]:

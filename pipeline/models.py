@@ -2,7 +2,10 @@
 
 import enum
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from pipeline.quality import QualityVerificationResult
 
 
 class PipelineJobStatus(enum.Enum):
@@ -109,6 +112,15 @@ class PipelineJob:
             updated_at=data.get("updated_at"),
             pipeline_config=data.get("pipeline_config", {}),
         )
+
+
+@dataclass
+class AttemptResult:
+    """Result of a single generation + verification attempt for a segment."""
+
+    passed: bool
+    quality_result: "QualityVerificationResult"
+    audio_metrics: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass

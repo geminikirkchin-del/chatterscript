@@ -2,7 +2,10 @@
 
 import logging
 from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
+
+if TYPE_CHECKING:
+    from pipeline.quality import QualityVerificationResult
 
 logger = logging.getLogger(__name__)
 
@@ -15,6 +18,22 @@ DEFAULT_SEED_DELTA = 1
 DEFAULT_SPEAKER_SIMILARITY_THRESHOLD = 0.75
 DEFAULT_SPECTRAL_CONTRAST_THRESHOLD = 0.80
 DEFAULT_MFCC_MSE_THRESHOLD = 0.05
+
+GENERATION_FAILURE_REASON = "generation returned no audio"
+
+# Failure reasons produced by the content/ASR quality layers (whisperx alignment,
+# jiwer content, legacy ASR). The agent treats these as content failures and
+# applies its content adjustment rules; everything else is an audio failure.
+CONTENT_FAILURES = {
+    "whisperx_low_confidence",
+    "text_coverage_low",
+    "wer_too_high",
+    "cer_too_high",
+    "whisperx_unavailable",
+    "jiwer_unavailable",
+    "asr_mismatch",
+    "asr_transcription_failed",
+}
 
 
 def _params_signature(params: Dict[str, Any]) -> str:
@@ -201,18 +220,17 @@ class ParameterAgent:
     def decide(
         self,
         base_params: Dict[str, Any],
-        audio_failure: Optional[str],
-        asr_failure: Optional[str],
+        quality_result: Optional["QualityVerificationResult"],
         audio_metrics: Optional[Dict[str, Any]] = None,
         layer_results: Optional[Dict[str, Any]] = None,
     ) -> AgentDecision:
         """
-        Inspect failure metadata and return adjusted generation parameters.
+        Inspect the last verification result and return adjusted generation parameters.
 
         Args:
             base_params: current generation parameters.
-            audio_failure: audio verification failure reason (or None).
-            asr_failure: ASR verification failure reason (or None).
+            quality_result: aggregated quality result of the last attempt (or None
+                if generation produced no audio).
             audio_metrics: optional basic audio metrics from the last attempt.
             layer_results: optional per-layer quality results from the last attempt.
 
@@ -223,15 +241,21 @@ class ParameterAgent:
         deltas: Dict[str, Any] = {}
         reasons: list[str] = []
 
-        # ASR / content mismatch: lower temperature (more deterministic), raise cfg_weight.
-        content_failures = (
-            "asr_mismatch",
-            "whisperx_low_confidence",
-            "text_coverage_low",
-            "wer_too_high",
-            "cer_too_high",
-        )
-        if asr_failure in content_failures:
+        # Categorize the failure: content failures come from the ASR/content
+        # quality layers; anything else is an audio failure. Generation failures
+        # (no audio) get their own rule below.
+        failure_reason = quality_result.failure_reason if quality_result else None
+        generation_failed = quality_result is None or failure_reason == GENERATION_FAILURE_REASON
+        content_failure: Optional[str] = None
+        audio_failure: Optional[str] = None
+        if not generation_failed and failure_reason is not None:
+            if failure_reason in CONTENT_FAILURES:
+                content_failure = failure_reason
+            else:
+                audio_failure = failure_reason
+
+        # Content mismatch: lower temperature (more deterministic), raise cfg_weight.
+        if content_failure:
             old_temp = params.get("temperature", 0.8)
             new_temp = max(0.1, old_temp + self.temperature_delta)
             params["temperature"] = round(new_temp, 2)
@@ -242,7 +266,7 @@ class ParameterAgent:
             params["cfg_weight"] = round(new_cfg, 2)
             deltas["cfg_weight"] = params["cfg_weight"] - old_cfg
 
-            reasons.append(f"{asr_failure}: lower temperature, raise cfg_weight")
+            reasons.append(f"{content_failure}: lower temperature, raise cfg_weight")
 
         # Audio silence / low RMS: lower exaggeration.
         if audio_failure in ("long_silence", "low_rms"):
@@ -282,12 +306,12 @@ class ParameterAgent:
                 reasons.append("duration_deviation: nudge speed_factor up")
 
         # Repeated combined failures: also change seed for variety.
-        if audio_failure and asr_failure:
+        if audio_failure and content_failure:
             old_seed = params.get("seed", 0)
             params["seed"] = old_seed + self.seed_delta
             deltas["seed"] = self.seed_delta
             reasons.append("combined failures: change seed")
-        elif asr_failure or audio_failure:
+        elif content_failure or audio_failure:
             # Single failure type: still nudge seed on the first agent attempt.
             old_seed = params.get("seed", 0)
             params["seed"] = old_seed + self.seed_delta
