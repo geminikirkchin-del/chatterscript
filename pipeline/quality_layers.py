@@ -10,7 +10,7 @@ from typing import Any, Dict, Optional
 import soundfile as sf
 
 from config import config_manager
-from pipeline.quality import LayerResult, QualityVerifier
+from pipeline.quality import LayerResult, QualityVerifier, VerificationContext
 
 logger = logging.getLogger(__name__)
 
@@ -184,7 +184,7 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[VerificationContext] = None,
     ) -> LayerResult:
         cfg = self._config()
         target_lufs = _get_threshold(cfg, "target_lufs", self.name)
@@ -260,24 +260,19 @@ def _get_whisperx_config() -> Dict[str, Any]:
     return config_manager.get("pipeline.asr", {})
 
 
-def _run_whisperx_with_cache(
+def run_whisperx_alignment(
     audio_path: str,
     original_text: str,
     language: str,
-    context: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
     """
-    Run WhisperX alignment once per segment and cache the result in context.
+    Run WhisperX alignment once per segment.
 
-    Both WhisperXAlignmentVerifier and JiwerContentVerifier call this helper so
-    the expensive model is loaded only once per segment.
+    Called by PipelineQualityVerifier when any enabled layer declares
+    requires_whisperx; the result is shared with all layers via
+    VerificationContext.whisperx_result. Returns None if the runner or the
+    isolated venv is unavailable.
     """
-    context_key = f"whisperx_align:{audio_path}"
-    if context is not None:
-        cached = context.get(context_key)
-        if cached is not None:
-            return cached
-
     asr_config = _get_whisperx_config()
     model_name = asr_config.get("model", "small")
     # Use the same device the TTS engine resolved to (whisperx will re-resolve
@@ -288,16 +283,13 @@ def _run_whisperx_with_cache(
     if run_fn is None:
         return None
 
-    result = run_fn(
+    return run_fn(
         audio_path=audio_path,
         reference_text=original_text,
         language=language,
         model_name=model_name,
         device=device,
     )
-    if result is not None and context is not None:
-        context[context_key] = result
-    return result
 
 
 class WhisperXAlignmentVerifier(QualityVerifier):
@@ -308,6 +300,8 @@ class WhisperXAlignmentVerifier(QualityVerifier):
     - Mean word confidence >= threshold
     - Text coverage ratio (transcribed vs original units) >= threshold
     """
+
+    requires_whisperx = True
 
     @property
     def name(self) -> str:
@@ -323,13 +317,13 @@ class WhisperXAlignmentVerifier(QualityVerifier):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[VerificationContext] = None,
     ) -> LayerResult:
         cfg = self._config()
         min_confidence = _get_threshold(cfg, "min_mean_word_confidence", self.name)
         min_coverage = _get_threshold(cfg, "min_text_coverage_ratio", self.name)
 
-        result = _run_whisperx_with_cache(audio_path, original_text, language, context)
+        result = context.whisperx_result if context is not None else None
 
         if result is None:
             return LayerResult(
@@ -388,6 +382,8 @@ class JiwerContentVerifier(QualityVerifier):
     like a per-character word error rate.
     """
 
+    requires_whisperx = True
+
     @property
     def name(self) -> str:
         return "jiwer_content"
@@ -410,13 +406,13 @@ class JiwerContentVerifier(QualityVerifier):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[VerificationContext] = None,
     ) -> LayerResult:
         cfg = self._config()
         max_wer = _get_threshold(cfg, "max_wer", self.name)
         max_cer = _get_threshold(cfg, "max_cer", self.name)
 
-        result = _run_whisperx_with_cache(audio_path, original_text, language, context)
+        result = context.whisperx_result if context is not None else None
 
         if result is None:
             return LayerResult(
@@ -504,7 +500,7 @@ class ResemblyzerSpeakerVerifier(QualityVerifier):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[VerificationContext] = None,
     ) -> LayerResult:
         cfg = self._config()
         min_similarity = _get_threshold(cfg, "min_similarity", self.name)
@@ -590,7 +586,7 @@ class LibrosaSpectralVerifier(QualityVerifier):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[VerificationContext] = None,
     ) -> LayerResult:
         cfg = self._config()
         max_mfcc_mse = _get_threshold(cfg, "max_mfcc_mse", self.name)

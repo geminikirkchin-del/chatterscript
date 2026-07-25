@@ -3,7 +3,7 @@
 from typing import Any, Dict, Optional
 
 from config import config_manager
-from pipeline.quality import LayerResult, QualityVerifier
+from pipeline.quality import LayerResult, QualityVerifier, VerificationContext
 from pipeline.verifier import (
     DEFAULT_CLIP_THRESHOLD,
     DEFAULT_MAX_DURATION_DEVIATION,
@@ -30,7 +30,7 @@ class BasicAudioVerifierAdapter(QualityVerifier):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[VerificationContext] = None,
     ) -> LayerResult:
         audio, sr = sf.read(audio_path, dtype="float32")
         if audio.ndim > 1:

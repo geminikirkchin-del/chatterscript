@@ -28,6 +28,17 @@ class LayerResult:
 
 
 @dataclass
+class VerificationContext:
+    """
+    Shared, explicitly-typed context passed to every layer in one verify()
+    call. Expensive analysis results are computed once by the orchestrator
+    and stored here, replacing the old stringly-typed shared dict.
+    """
+
+    whisperx_result: Optional[Dict[str, Any]] = None
+
+
+@dataclass
 class QualityVerificationResult:
     """Aggregated result from all verification layers for one segment."""
 
@@ -39,6 +50,10 @@ class QualityVerificationResult:
 
 class QualityVerifier(ABC):
     """Abstract interface for a single verification layer."""
+
+    # Layers that need the WhisperX alignment result set this to True. The
+    # orchestrator runs WhisperX once up-front and shares it via the context.
+    requires_whisperx: bool = False
 
     @property
     @abstractmethod
@@ -54,7 +69,7 @@ class QualityVerifier(ABC):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
-        context: Optional[Dict[str, Any]] = None,
+        context: Optional[VerificationContext] = None,
     ) -> LayerResult:
         """
         Run the verification layer and return a LayerResult.
@@ -63,8 +78,9 @@ class QualityVerifier(ABC):
         layer_results[self.name].
 
         Args:
-            context: Optional shared dict that layers can read/write to avoid
-                re-running expensive analysis (e.g. WhisperX transcription).
+            context: Shared VerificationContext carrying expensive analysis
+                results (e.g. whisperx_result) computed once by the
+                orchestrator. Layers read attributes, never string keys.
         """
         ...
 
@@ -143,7 +159,23 @@ class PipelineQualityVerifier:
     ) -> QualityVerificationResult:
         """Run all configured layers and aggregate the result."""
         layer_results: Dict[str, Dict[str, Any]] = {}
-        shared_context: Dict[str, Any] = {}
+        shared_context = VerificationContext()
+
+        # Run WhisperX alignment once up-front if any enabled layer declares
+        # the dependency, and share it with every layer via the context.
+        if any(getattr(layer, "requires_whisperx", False) for layer in self.layers):
+            try:
+                from pipeline.quality_layers import run_whisperx_alignment
+
+                shared_context.whisperx_result = run_whisperx_alignment(
+                    audio_path=audio_path,
+                    original_text=original_text,
+                    language=language,
+                )
+            except Exception as e:
+                logger.warning(f"WhisperX alignment failed: {e}")
+                shared_context.whisperx_result = None
+
         overall_passed = True
         failure_reason: Optional[str] = None
         scores: List[float] = []
