@@ -13,6 +13,32 @@ from pipeline.quality import LayerResult, PipelineQualityVerifier, QualityVerifi
 from pipeline.quality_layers import FFmpegAudioMetricsVerifier
 
 
+class TestFinalLoudnormConfig:
+    """Candidate 5: final broadcast loudnorm targets are independent keys."""
+
+    def test_final_loudnorm_independent_of_segment_thresholds(self):
+        from config import config_manager
+        from pipeline.jobs import _final_loudnorm_targets
+
+        # The composed-output loudnorm reads its own dedicated config section.
+        target_lufs, true_peak, lra = _final_loudnorm_targets()
+        assert target_lufs == -16.0
+        assert true_peak == -1.5
+        assert lra == 11.0
+
+        # The per-segment audio_metrics layer keeps its lenient peak threshold.
+        segment_thresholds = FFmpegAudioMetricsVerifier()._config()
+        assert segment_thresholds.get("true_peak_max_dbtp") == 0.5
+
+        # Both come from config, not from inline fallback tables.
+        verification = config_manager.get("pipeline.verification", {})
+        assert verification["final_loudnorm"]["true_peak_dbtp"] == -1.5
+        assert (
+            verification["layers"]["audio_metrics"]["thresholds"]["true_peak_max_dbtp"]
+            == 0.5
+        )
+
+
 def _write_test_tone(path: str, duration_sec: float = 2.0, sr: int = 24000) -> None:
     """Write an amplitude-modulated sine tone with moderate dynamic range."""
     samples = int(sr * duration_sec)

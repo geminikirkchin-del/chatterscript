@@ -10,11 +10,11 @@ import numpy as np
 import soundfile as sf
 
 from config import (
+    config_manager,
     get_audio_output_format,
     get_audio_sample_rate,
     get_output_path,
     get_pipeline_max_retry_count,
-    get_pipeline_verification_thresholds,
 )
 from pipeline.agent import AgentDecision, ParameterAgent
 from pipeline.composer import compose_segments, loudnorm_final_audio
@@ -35,6 +35,20 @@ from pipeline.store import JobStore
 logger = logging.getLogger(__name__)
 
 SynthesizeFn = Callable[..., Tuple[Optional[np.ndarray], Optional[int]]]
+
+
+def _final_loudnorm_targets() -> Tuple[float, float, float]:
+    """
+    Broadcast loudness targets for the composed final audio, read from
+    pipeline.verification.final_loudnorm. These are independent of the
+    per-segment audio_metrics thresholds; DEFAULT_CONFIG guarantees the keys.
+    """
+    cfg = config_manager.get("pipeline.verification.final_loudnorm", {})
+    return (
+        float(cfg["target_lufs"]),
+        float(cfg["true_peak_dbtp"]),
+        float(cfg["lra"]),
+    )
 
 
 class PipelineService:
@@ -179,12 +193,10 @@ class PipelineService:
             final_dir = self.base_dir / job_id
             final_path = final_dir / f"final.{final_format}"
 
-            # Read loudnorm targets from the audio_metrics layer config.
-            verification_cfg = get_pipeline_verification_thresholds()
-            audio_metrics_cfg = verification_cfg.get("layers", {}).get("audio_metrics", {})
-            audio_metrics_thresholds = audio_metrics_cfg.get("thresholds", {})
-            target_lufs = float(audio_metrics_thresholds.get("target_lufs", -16.0))
-            true_peak = float(audio_metrics_thresholds.get("true_peak_max_dbtp", -1.5))
+            # Final loudnorm targets come from the dedicated broadcast-target
+            # config, independent of the lenient per-segment audio_metrics
+            # thresholds (defaults guaranteed by DEFAULT_CONFIG merge).
+            target_lufs, true_peak, lra = _final_loudnorm_targets()
 
             temp_wav = final_dir / "final_temp.wav"
             normalized_wav = final_dir / "final_normalized.wav"
@@ -196,6 +208,7 @@ class PipelineService:
                     normalized_wav,
                     target_lufs=target_lufs,
                     true_peak=true_peak,
+                    lra=lra,
                     sample_rate=target_sr,
                 )
                 if ok:

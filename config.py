@@ -163,6 +163,13 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                     },
                 },
             },
+            # Broadcast loudness target applied by the final compose loudnorm.
+            # Independent of the lenient per-segment audio_metrics thresholds.
+            "final_loudnorm": {
+                "target_lufs": -16.0,
+                "true_peak_dbtp": -1.5,
+                "lra": 11,
+            },
         },
         "asr": {  # whisperx ASR settings
             "enabled": True,

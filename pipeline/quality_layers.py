@@ -22,21 +22,40 @@ except Exception:
     jiwer = None  # type: ignore[assignment]
 
 
-def _layer_thresholds(
-    layer_name: str, defaults: Optional[Dict[str, Any]] = None
-) -> Dict[str, Any]:
+def _layer_thresholds(layer_name: str) -> Dict[str, Any]:
     """
     Load a layer's thresholds from pipeline.verification config.
 
-    Config values win over the layer's inline defaults; keys missing from
-    config fall back to the defaults table.
+    Defaults live only in config.py's DEFAULT_CONFIG (always merged into the
+    loaded config), so no inline fallback tables are duplicated here.
     """
     verification_cfg = config_manager.get("pipeline.verification", {})
     layer_cfg = verification_cfg.get("layers", {}).get(layer_name, {})
-    configured = layer_cfg.get("thresholds")
-    if configured is None:
-        return dict(defaults or {})
-    return {**(defaults or {}), **configured}
+    return dict(layer_cfg.get("thresholds", {}))
+
+
+_missing_threshold_warned: set = set()
+
+
+def _get_threshold(
+    thresholds: Dict[str, Any], key: str, layer_name: str
+) -> Optional[float]:
+    """
+    Read a single threshold as float. If the key is absent (config defaults
+    normally guarantee its presence), log once and return None so the caller
+    can skip that particular check instead of duplicating a default number.
+    """
+    value = thresholds.get(key)
+    if value is None:
+        warn_key = (layer_name, key)
+        if warn_key not in _missing_threshold_warned:
+            _missing_threshold_warned.add(warn_key)
+            logger.warning(
+                f"Threshold '{key}' for layer '{layer_name}' is not configured; "
+                "the related check will be skipped."
+            )
+        return None
+    return float(value)
 
 
 def _load_runner(func_name: str, label: str):
@@ -156,16 +175,7 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
         return "audio_metrics"
 
     def _config(self) -> Dict[str, Any]:
-        return _layer_thresholds(
-            self.name,
-            {
-                "target_lufs": -16.0,
-                "lufs_tolerance": 2.0,
-                "true_peak_max_dbtp": 0.5,
-                "min_rms": 0.01,
-                "min_dynamic_range_db": 10.0,
-            },
-        )
+        return _layer_thresholds(self.name)
 
     def verify(
         self,
@@ -177,13 +187,19 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
         context: Optional[Dict[str, Any]] = None,
     ) -> LayerResult:
         cfg = self._config()
-        target_lufs = float(cfg.get("target_lufs", -16.0))
-        lufs_tolerance = float(cfg.get("lufs_tolerance", 2.0))
-        true_peak_max = float(cfg.get("true_peak_max_dbtp", 0.5))
-        min_rms = float(cfg.get("min_rms", 0.01))
-        min_dynamic_range = float(cfg.get("min_dynamic_range_db", 10.0))
+        target_lufs = _get_threshold(cfg, "target_lufs", self.name)
+        lufs_tolerance = _get_threshold(cfg, "lufs_tolerance", self.name)
+        true_peak_max = _get_threshold(cfg, "true_peak_max_dbtp", self.name)
+        min_rms = _get_threshold(cfg, "min_rms", self.name)
+        min_dynamic_range = _get_threshold(cfg, "min_dynamic_range_db", self.name)
 
-        loudnorm = _run_ffmpeg_loudnorm(audio_path, target_lufs, true_peak_max)
+        # The loudnorm measurement needs both the loudness target and the peak
+        # ceiling; without them no loudness metrics are recorded and the LUFS
+        # check is skipped.
+        if target_lufs is not None and true_peak_max is not None:
+            loudnorm = _run_ffmpeg_loudnorm(audio_path, target_lufs, true_peak_max)
+        else:
+            loudnorm = {}
         basic = _compute_rms_and_peak(audio_path)
         dynamic_range_db = _compute_dynamic_range_db(audio_path)
 
@@ -205,11 +221,16 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
         failure_reason: Optional[str] = None
         # Check RMS first so truly silent files are flagged as low_rms (matching the
         # legacy basic verifier behaviour) before LUFS can fail.
-        if basic["rms"] < min_rms:
+        # A threshold of None means the key is not configured; that check is skipped.
+        if min_rms is not None and basic["rms"] < min_rms:
             failure_reason = "low_rms"
-        elif abs(input_lufs - target_lufs) > lufs_tolerance:
+        elif (
+            target_lufs is not None
+            and lufs_tolerance is not None
+            and abs(input_lufs - target_lufs) > lufs_tolerance
+        ):
             failure_reason = "lufs_out_of_range"
-        elif dynamic_range_db < min_dynamic_range:
+        elif min_dynamic_range is not None and dynamic_range_db < min_dynamic_range:
             failure_reason = "dynamic_range_low"
         # Note: true_peak is recorded in metrics but is not a segment hard-fail.
         # Raw TTS output often sits near 0 dBFS; final compose applies loudnorm to
@@ -293,13 +314,7 @@ class WhisperXAlignmentVerifier(QualityVerifier):
         return "whisperx_alignment"
 
     def _config(self) -> Dict[str, Any]:
-        return _layer_thresholds(
-            self.name,
-            {
-                "min_mean_word_confidence": 0.70,
-                "min_text_coverage_ratio": 0.90,
-            },
-        )
+        return _layer_thresholds(self.name)
 
     def verify(
         self,
@@ -311,8 +326,8 @@ class WhisperXAlignmentVerifier(QualityVerifier):
         context: Optional[Dict[str, Any]] = None,
     ) -> LayerResult:
         cfg = self._config()
-        min_confidence = float(cfg.get("min_mean_word_confidence", 0.70))
-        min_coverage = float(cfg.get("min_text_coverage_ratio", 0.90))
+        min_confidence = _get_threshold(cfg, "min_mean_word_confidence", self.name)
+        min_coverage = _get_threshold(cfg, "min_text_coverage_ratio", self.name)
 
         result = _run_whisperx_with_cache(audio_path, original_text, language, context)
 
@@ -343,9 +358,9 @@ class WhisperXAlignmentVerifier(QualityVerifier):
         }
 
         failure_reason: Optional[str] = None
-        if mean_confidence < min_confidence:
+        if min_confidence is not None and mean_confidence < min_confidence:
             failure_reason = "whisperx_low_confidence"
-        elif coverage_ratio < min_coverage:
+        elif min_coverage is not None and coverage_ratio < min_coverage:
             failure_reason = "text_coverage_low"
 
         if failure_reason is None:
@@ -378,13 +393,7 @@ class JiwerContentVerifier(QualityVerifier):
         return "jiwer_content"
 
     def _config(self) -> Dict[str, Any]:
-        return _layer_thresholds(
-            self.name,
-            {
-                "max_wer": 0.15,
-                "max_cer": 0.10,
-            },
-        )
+        return _layer_thresholds(self.name)
 
     def _prepare_for_wer(self, text: str, language: str) -> str:
         """For CJK, split into space-separated characters for jiwer WER."""
@@ -404,8 +413,8 @@ class JiwerContentVerifier(QualityVerifier):
         context: Optional[Dict[str, Any]] = None,
     ) -> LayerResult:
         cfg = self._config()
-        max_wer = float(cfg.get("max_wer", 0.15))
-        max_cer = float(cfg.get("max_cer", 0.10))
+        max_wer = _get_threshold(cfg, "max_wer", self.name)
+        max_cer = _get_threshold(cfg, "max_cer", self.name)
 
         result = _run_whisperx_with_cache(audio_path, original_text, language, context)
 
@@ -450,9 +459,9 @@ class JiwerContentVerifier(QualityVerifier):
         }
 
         failure_reason: Optional[str] = None
-        if wer > max_wer:
+        if max_wer is not None and wer > max_wer:
             failure_reason = "wer_too_high"
-        elif cer > max_cer:
+        elif max_cer is not None and cer > max_cer:
             failure_reason = "cer_too_high"
 
         if failure_reason is None:
@@ -486,7 +495,7 @@ class ResemblyzerSpeakerVerifier(QualityVerifier):
         return "resemblyzer_speaker"
 
     def _config(self) -> Dict[str, Any]:
-        return _layer_thresholds(self.name, {"min_similarity": 0.75})
+        return _layer_thresholds(self.name)
 
     def verify(
         self,
@@ -498,7 +507,7 @@ class ResemblyzerSpeakerVerifier(QualityVerifier):
         context: Optional[Dict[str, Any]] = None,
     ) -> LayerResult:
         cfg = self._config()
-        min_similarity = float(cfg.get("min_similarity", 0.75))
+        min_similarity = _get_threshold(cfg, "min_similarity", self.name)
 
         if not reference_voice_path:
             return LayerResult(
@@ -572,10 +581,7 @@ class LibrosaSpectralVerifier(QualityVerifier):
         return "librosa_spectral"
 
     def _config(self) -> Dict[str, Any]:
-        return _layer_thresholds(
-            self.name,
-            {"max_mfcc_mse": 0.05, "min_spectral_contrast": 0.80},
-        )
+        return _layer_thresholds(self.name)
 
     def verify(
         self,
@@ -587,8 +593,8 @@ class LibrosaSpectralVerifier(QualityVerifier):
         context: Optional[Dict[str, Any]] = None,
     ) -> LayerResult:
         cfg = self._config()
-        max_mfcc_mse = float(cfg.get("max_mfcc_mse", 0.05))
-        min_spectral_contrast = float(cfg.get("min_spectral_contrast", 0.80))
+        max_mfcc_mse = _get_threshold(cfg, "max_mfcc_mse", self.name)
+        min_spectral_contrast = _get_threshold(cfg, "min_spectral_contrast", self.name)
 
         if not reference_voice_path:
             return LayerResult(

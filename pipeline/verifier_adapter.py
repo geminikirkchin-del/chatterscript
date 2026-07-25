@@ -4,7 +4,14 @@ from typing import Any, Dict, Optional
 
 from config import config_manager
 from pipeline.quality import LayerResult, QualityVerifier
-from pipeline.verifier import VerificationThresholds, verify_audio
+from pipeline.verifier import (
+    DEFAULT_CLIP_THRESHOLD,
+    DEFAULT_MAX_DURATION_DEVIATION,
+    DEFAULT_MAX_SILENCE_MS,
+    DEFAULT_MIN_RMS,
+    VerificationThresholds,
+    verify_audio,
+)
 
 import soundfile as sf
 
@@ -45,13 +52,22 @@ class BasicAudioVerifierAdapter(QualityVerifier):
         )
 
     def _load_thresholds(self) -> VerificationThresholds:
+        # Legacy thresholds live flat under pipeline.verification; defaults come
+        # from DEFAULT_CONFIG in config.py (merged into the loaded config). The
+        # pipeline.verifier constants are the fallback of last resort, so no
+        # default numbers are duplicated here.
         verification_cfg = config_manager.get("pipeline.verification", {})
-        thresholds_cfg = verification_cfg.get("thresholds", {})
         return VerificationThresholds(
-            max_silence_ms=float(thresholds_cfg.get("max_silence_ms", 500.0)),
-            clip_threshold=float(thresholds_cfg.get("clip_threshold", 0.99)),
-            min_rms=float(thresholds_cfg.get("min_rms", 0.01)),
+            max_silence_ms=float(
+                verification_cfg.get("max_silence_ms", DEFAULT_MAX_SILENCE_MS)
+            ),
+            clip_threshold=float(
+                verification_cfg.get("clip_threshold", DEFAULT_CLIP_THRESHOLD)
+            ),
+            min_rms=float(verification_cfg.get("min_rms", DEFAULT_MIN_RMS)),
             max_duration_deviation=float(
-                thresholds_cfg.get("max_duration_deviation", 0.50)
+                verification_cfg.get(
+                    "max_duration_deviation", DEFAULT_MAX_DURATION_DEVIATION
+                )
             ),
         )
