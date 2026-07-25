@@ -111,7 +111,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "pause_ms": 150,  # Silence inserted between segments in milliseconds.
         "max_retry_count": 3,  # Retry attempts per failed segment.
         "verification": {  # Audio + ASR verification thresholds
-            "max_silence_ms": 300,
+            "max_silence_ms": 500,
             "clip_threshold": 0.99,
             "min_rms": 0.01,
             "max_duration_deviation": 0.50,

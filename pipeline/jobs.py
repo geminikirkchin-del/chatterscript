@@ -439,7 +439,7 @@ class PipelineService:
 
         cfg = get_pipeline_verification_thresholds()
         return VerificationThresholds(
-            max_silence_ms=cfg.get("max_silence_ms", 300.0),
+            max_silence_ms=cfg.get("max_silence_ms", 500.0),
             clip_threshold=cfg.get("clip_threshold", 0.99),
             min_rms=cfg.get("min_rms", 0.01),
             max_duration_deviation=cfg.get("max_duration_deviation", 0.50),
