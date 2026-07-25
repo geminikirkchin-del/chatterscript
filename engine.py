@@ -239,6 +239,71 @@ def _get_model_class(selector: str) -> tuple:
     return ChatterboxTTS, "original"
 
 
+def _get_actual_model_device() -> Optional[str]:
+    """
+    Inspects the loaded model's tensors to determine the actual device it is running on.
+    This is more reliable than the configured value because some model loaders may place
+    weights on a different device than requested, or the configured value may be stale.
+    """
+    global chatterbox_model, model_device
+    if chatterbox_model is None:
+        return model_device
+
+    try:
+        devices_seen: set = set()
+
+        # Check known submodules first.
+        for attr_name in (
+            "t3",
+            "s3gen",
+            "transformer",
+            "diffusion",
+            "model",
+            "codec",
+            "audio_codec",
+            "tts",
+            "lm",
+        ):
+            submodule = getattr(chatterbox_model, attr_name, None)
+            if submodule is None:
+                continue
+            try:
+                for p in submodule.parameters():
+                    devices_seen.add(str(p.device))
+                    break
+                for b in submodule.buffers():
+                    devices_seen.add(str(b.device))
+                    break
+            except Exception:
+                continue
+
+        # Fallback: scan all nn.Module attributes.
+        if not devices_seen:
+            for attr in vars(chatterbox_model).values():
+                if isinstance(attr, torch.nn.Module):
+                    try:
+                        for p in attr.parameters():
+                            devices_seen.add(str(p.device))
+                            break
+                    except Exception:
+                        continue
+
+        if not devices_seen:
+            return model_device
+
+        # Prefer cuda, then mps, then cpu.
+        for d in devices_seen:
+            if d.startswith("cuda"):
+                return d
+        for d in devices_seen:
+            if d.startswith("mps"):
+                return "mps"
+        return "cpu"
+    except Exception as e:
+        logger.warning(f"Could not determine actual model device: {e}")
+        return model_device
+
+
 def get_model_info() -> dict:
     """
     Returns information about the currently loaded model.
@@ -247,11 +312,18 @@ def get_model_info() -> dict:
     Returns:
         Dictionary containing model information
     """
+    actual_device = _get_actual_model_device()
+    if actual_device != model_device:
+        logger.info(
+            f"Model resolved device ('{model_device}') differs from actual device ('{actual_device}'). "
+            f"Reporting actual device to UI."
+        )
     return {
         "loaded": MODEL_LOADED,
         "type": loaded_model_type,  # "original", "turbo", or "multilingual"
         "class_name": loaded_model_class_name,
-        "device": model_device,
+        "device": actual_device,
+        "configured_device": model_device,
         "sample_rate": chatterbox_model.sr if chatterbox_model else None,
         "supports_paralinguistic_tags": loaded_model_type == "turbo",
         "available_paralinguistic_tags": (

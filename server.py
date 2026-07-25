@@ -60,6 +60,8 @@ from config import (
     get_audio_sample_rate,
     get_full_config_for_template,
     get_audio_output_format,
+    get_pipeline_max_segment_duration_sec,
+    get_pipeline_pause_ms,
 )
 
 import engine  # TTS Engine interface
@@ -67,8 +69,17 @@ from models import (  # Pydantic models
     CustomTTSRequest,
     ErrorResponse,
     UpdateStatusResponse,
+    PipelineSubmitRequest,
+    PipelineSubmitResponse,
+    PipelineJobResponse,
+    PipelineJobSummaryResponse,
+    PipelineJobListResponse,
+    PipelineFeedbackRequest,
+    PipelineFeedbackResponse,
 )
 import utils  # Utility functions
+from pipeline.jobs import PipelineService
+from pipeline.models import PipelineJobStatus
 
 from pydantic import BaseModel, Field
 
@@ -188,6 +199,10 @@ app = FastAPI(
     version="2.0.2",  # Version Bump
     lifespan=lifespan,
 )
+
+# --- Pipeline service (state persisted to disk) ---
+pipeline_service = PipelineService()
+
 
 # --- CORS Middleware ---
 app.add_middleware(
@@ -1032,12 +1047,12 @@ async def custom_tts_endpoint(
                     logger.error(f"Streaming TTS: engine returned None for chunk {i+1}; stopping stream.")
                     return
 
-                if speed_factor_stream != 1.0:
-                    audio_tensor, _ = utils.apply_speed_factor(
-                        audio_tensor, chunk_sr, speed_factor_stream
-                    )
-
                 audio_np = audio_tensor.cpu().numpy().squeeze().astype(np.float32)
+
+                if speed_factor_stream != 1.0:
+                    # Use WSOLA instead of librosa time_stretch to avoid echo artifacts.
+                    audio_np = utils.apply_speed_factor_wsola(audio_np, speed_factor_stream)
+                    audio_np = audio_np.astype(np.float32)
 
                 if not header_sent:
                     yield _create_wav_header(chunk_sr)
@@ -1117,25 +1132,25 @@ async def custom_tts_endpoint(
                     f"differs from previous ({engine_output_sample_rate}Hz). Using first chunk's SR."
                 )
 
-            current_processed_audio_tensor = chunk_audio_tensor
-
             speed_factor_to_use = (
                 request.speed_factor
                 if request.speed_factor is not None
                 else get_gen_default_speed_factor()
             )
-            if speed_factor_to_use != 1.0:
-                current_processed_audio_tensor, _ = utils.apply_speed_factor(
-                    current_processed_audio_tensor,
-                    chunk_sr_from_engine,
-                    speed_factor_to_use,
-                )
-                perf_monitor.record(f"Speed factor applied to chunk {i+1}")
 
             # ### MODIFICATION ###
             # All other processing is REMOVED from the loop.
             # We will process the final concatenated audio clip.
-            processed_audio_np = current_processed_audio_tensor.cpu().numpy().squeeze()
+            processed_audio_np = chunk_audio_tensor.cpu().numpy().squeeze().astype(np.float32)
+
+            if speed_factor_to_use != 1.0:
+                # Use WSOLA instead of librosa time_stretch to avoid echo artifacts.
+                processed_audio_np = utils.apply_speed_factor_wsola(
+                    processed_audio_np, speed_factor_to_use
+                )
+                processed_audio_np = processed_audio_np.astype(np.float32)
+                perf_monitor.record(f"Speed factor applied to chunk {i+1}")
+
             all_audio_segments_np.append(processed_audio_np)
 
         except HTTPException as http_exc:
@@ -1378,6 +1393,267 @@ async def custom_tts_endpoint(
     return StreamingResponse(
         io.BytesIO(encoded_audio_bytes), media_type=media_type, headers=headers
     )
+
+
+# --- Long-form TTS Pipeline Endpoints ---
+
+
+def _build_gen_params(request: PipelineSubmitRequest) -> Dict[str, Any]:
+    """Merge request overrides with config defaults for pipeline generation."""
+    return {
+        "temperature": (
+            request.temperature
+            if request.temperature is not None
+            else get_gen_default_temperature()
+        ),
+        "exaggeration": (
+            request.exaggeration
+            if request.exaggeration is not None
+            else get_gen_default_exaggeration()
+        ),
+        "cfg_weight": (
+            request.cfg_weight
+            if request.cfg_weight is not None
+            else get_gen_default_cfg_weight()
+        ),
+        "seed": request.seed if request.seed is not None else get_gen_default_seed(),
+        "speed_factor": (
+            request.speed_factor
+            if request.speed_factor is not None
+            else get_gen_default_speed_factor()
+        ),
+        "language": (
+            request.language
+            if request.language is not None
+            else get_gen_default_language()
+        ),
+    }
+
+
+def _build_voice_config(request: PipelineSubmitRequest) -> Dict[str, Any]:
+    """Validate and build the voice configuration for a pipeline job."""
+    if request.voice_mode == "predefined":
+        if not request.predefined_voice_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing 'predefined_voice_id' for 'predefined' voice mode.",
+            )
+        return {"mode": "predefined", "voice_id": request.predefined_voice_id}
+    else:
+        if not request.reference_audio_filename:
+            raise HTTPException(
+                status_code=400,
+                detail="Missing 'reference_audio_filename' for 'clone' voice mode.",
+            )
+        return {
+            "mode": "clone",
+            "reference_audio_filename": request.reference_audio_filename,
+        }
+
+
+def _run_pipeline_job(job_id: str, max_segment_duration: float, pause_ms: int):
+    """Background worker that runs a pipeline job to completion."""
+    try:
+        pipeline_service.run_job_sync(
+            job_id=job_id,
+            max_segment_duration=max_segment_duration,
+            pause_ms=pause_ms,
+        )
+    except Exception as e:
+        logger.error(f"Background pipeline job {job_id} failed: {e}", exc_info=True)
+
+
+@app.post(
+    "/api/tts-pipeline",
+    tags=["TTS Pipeline"],
+    summary="Submit a long-form TTS pipeline job",
+    response_model=PipelineSubmitResponse,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request parameters."},
+        503: {"model": ErrorResponse, "description": "TTS engine not available."},
+    },
+)
+async def submit_pipeline_job(
+    request: PipelineSubmitRequest, background_tasks: BackgroundTasks
+):
+    """
+    Submit a long script for asynchronous sentence-by-sentence TTS generation.
+    Returns immediately with a job_id; poll GET /api/tts-pipeline/{job_id} for status.
+    """
+    if not engine.MODEL_LOADED:
+        raise HTTPException(
+            status_code=503,
+            detail="TTS engine model is not currently loaded or available.",
+        )
+
+    voice_config = _build_voice_config(request)
+    gen_params = _build_gen_params(request)
+    pipeline_config: Dict[str, Any] = {}
+    if request.output_format is not None:
+        pipeline_config["output_format"] = request.output_format
+    pipeline_config["sample_rate"] = get_audio_sample_rate()
+
+    job_id = pipeline_service.submit_job(
+        text=request.text,
+        voice_config=voice_config,
+        gen_params=gen_params,
+        pipeline_config=pipeline_config,
+    )
+
+    max_segment_duration = (
+        request.max_segment_duration_sec
+        if request.max_segment_duration_sec is not None
+        else get_pipeline_max_segment_duration_sec()
+    )
+    pause_ms = request.pause_ms if request.pause_ms is not None else get_pipeline_pause_ms()
+
+    background_tasks.add_task(
+        _run_pipeline_job, job_id, max_segment_duration, pause_ms
+    )
+    logger.info(f"Submitted pipeline job {job_id}")
+    return PipelineSubmitResponse(job_id=job_id, status=PipelineJobStatus.PENDING.value)
+
+
+@app.get(
+    "/api/tts-pipeline",
+    tags=["TTS Pipeline"],
+    summary="List pipeline jobs",
+    response_model=PipelineJobListResponse,
+)
+async def list_pipeline_jobs():
+    """List all pipeline jobs with their current status."""
+    summaries = pipeline_service.list_jobs()
+    jobs = [
+        PipelineJobSummaryResponse(
+            job_id=s.job_id,
+            status=s.status,
+            segment_count=s.segment_count,
+            final_audio_path=s.final_audio_path,
+            created_at=s.created_at,
+            updated_at=s.updated_at,
+        )
+        for s in summaries
+    ]
+    return PipelineJobListResponse(jobs=jobs)
+
+
+@app.get(
+    "/api/tts-pipeline/{job_id}",
+    tags=["TTS Pipeline"],
+    summary="Get pipeline job status and segments",
+    response_model=PipelineJobResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "Job not found."},
+    },
+)
+async def get_pipeline_job(job_id: str):
+    """Get full status, segment list, and final audio path for a pipeline job."""
+    job = pipeline_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline job '{job_id}' not found.")
+    return PipelineJobResponse(
+        job_id=job.job_id,
+        status=job.status.value,
+        text=job.text,
+        segments=job.segments,
+        final_audio_path=job.final_audio_path,
+        created_at=job.created_at,
+        updated_at=job.updated_at,
+    )
+
+
+@app.get(
+    "/api/tts-pipeline/{job_id}/final",
+    tags=["TTS Pipeline"],
+    summary="Download the composed final audio",
+    responses={
+        404: {"model": ErrorResponse, "description": "Job or final audio not found."},
+        409: {"model": ErrorResponse, "description": "Job not yet complete."},
+    },
+)
+async def get_pipeline_final_audio(job_id: str):
+    """Download the composed final audio file for a completed pipeline job."""
+    job = pipeline_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline job '{job_id}' not found.")
+    if job.status != PipelineJobStatus.DONE:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pipeline job '{job_id}' is not ready (status={job.status.value}).",
+        )
+    if not job.final_audio_path or not Path(job.final_audio_path).exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Final audio for pipeline job '{job_id}' not found.",
+        )
+    final_path = Path(job.final_audio_path)
+    media_type = f"audio/{final_path.suffix.lstrip('.')}"
+    return FileResponse(str(final_path), media_type=media_type, filename=final_path.name)
+
+
+@app.get(
+    "/api/tts-pipeline/{job_id}/segments/{seg_id}/audio",
+    tags=["TTS Pipeline"],
+    summary="Download audio for a pipeline segment",
+    responses={
+        404: {"model": ErrorResponse, "description": "Job or segment audio not found."},
+    },
+)
+async def get_pipeline_segment_audio(job_id: str, seg_id: int):
+    """Download the individual WAV file for a pipeline segment."""
+    job = pipeline_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline job '{job_id}' not found.")
+    if seg_id < 0 or seg_id >= len(job.segments):
+        raise HTTPException(status_code=404, detail=f"Segment {seg_id} not found in job '{job_id}'.")
+    seg = job.segments[seg_id]
+    if not seg.audio_path or not Path(seg.audio_path).exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Audio for segment {seg_id} in job '{job_id}' not found.",
+        )
+    return FileResponse(seg.audio_path, media_type="audio/wav", filename=Path(seg.audio_path).name)
+
+
+@app.post(
+    "/api/tts-pipeline/{job_id}/feedback",
+    tags=["TTS Pipeline"],
+    summary="Submit feedback for a pipeline segment",
+    response_model=PipelineFeedbackResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "Job or segment not found."},
+    },
+)
+async def submit_pipeline_feedback(job_id: str, request: PipelineFeedbackRequest):
+    """Record user feedback (approve/reject/rating) for a pipeline segment."""
+    job = pipeline_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline job '{job_id}' not found.")
+    if request.segment_index < 0 or request.segment_index >= len(job.segments):
+        raise HTTPException(
+            status_code=404,
+            detail=f"Segment {request.segment_index} not found in job '{job_id}'.",
+        )
+    seg = job.segments[request.segment_index]
+    from pipeline.feedback import SegmentFeedback
+
+    ok = pipeline_service.feedback_store.append(
+        SegmentFeedback(
+            job_id=job_id,
+            segment_index=request.segment_index,
+            rating=request.rating,
+            comment=request.comment,
+            extra={
+                "segment_text": seg.text,
+                "params": seg.gen_params,
+                "score": seg.score,
+                "failure_reason": seg.failure_reason,
+            },
+        )
+    )
+    if not ok:
+        raise HTTPException(status_code=500, detail="Failed to save feedback.")
+    return PipelineFeedbackResponse(message="Feedback recorded.")
 
 
 MAX_SRT_FILE_BYTES = 5 * 1024 * 1024  # 5 MB is far larger than any legitimate SRT file

@@ -1,7 +1,7 @@
 # File: models.py
 # Pydantic models for API request and response validation.
 
-from typing import Optional, Literal
+from typing import Any, Dict, List, Optional, Literal
 from pydantic import BaseModel, Field
 
 
@@ -116,3 +116,96 @@ class UpdateStatusResponse(BaseModel):
         False,
         description="Indicates if a server restart is recommended or required for changes to take full effect.",
     )
+
+
+class PipelineSubmitRequest(BaseModel):
+    """Request model for submitting a long-form TTS pipeline job."""
+
+    text: str = Field(..., min_length=1, description="Long text to synthesize.")
+    voice_mode: Literal["predefined", "clone"] = Field(
+        "predefined",
+        description="Voice mode: 'predefined' or 'clone'.",
+    )
+    predefined_voice_id: Optional[str] = Field(
+        None,
+        description="Filename of the predefined voice (required for predefined mode).",
+    )
+    reference_audio_filename: Optional[str] = Field(
+        None,
+        description="Filename of the reference audio (required for clone mode).",
+    )
+    temperature: Optional[float] = Field(None, description="Overrides default temperature.")
+    exaggeration: Optional[float] = Field(None, description="Overrides default exaggeration.")
+    cfg_weight: Optional[float] = Field(None, description="Overrides default CFG weight.")
+    seed: Optional[int] = Field(None, description="Overrides default seed.")
+    speed_factor: Optional[float] = Field(None, description="Overrides default speed factor.")
+    language: Optional[str] = Field(None, description="Overrides default language.")
+    output_format: Optional[Literal["wav", "mp3", "opus"]] = Field(
+        None,
+        description="Output format for the final composed audio (defaults to config).",
+    )
+    max_segment_duration_sec: Optional[float] = Field(
+        None,
+        ge=5.0,
+        le=120.0,
+        description="Optional override for the per-segment audio duration target.",
+    )
+    pause_ms: Optional[int] = Field(
+        None,
+        ge=0,
+        le=1000,
+        description="Optional override for the inter-segment pause in milliseconds.",
+    )
+
+
+class PipelineJobResponse(BaseModel):
+    """Response model for a pipeline job status query."""
+
+    job_id: str
+    status: str
+    text: str
+    segments: List[Dict[str, Any]]
+    final_audio_path: Optional[str]
+    created_at: Optional[float]
+    updated_at: Optional[float]
+
+
+class PipelineJobSummaryResponse(BaseModel):
+    """Response model for a pipeline job list entry."""
+
+    job_id: str
+    status: str
+    segment_count: int
+    final_audio_path: Optional[str]
+    created_at: Optional[float]
+    updated_at: Optional[float]
+
+
+class PipelineJobListResponse(BaseModel):
+    """Response model for listing pipeline jobs."""
+
+    jobs: List[PipelineJobSummaryResponse]
+
+
+class PipelineSubmitResponse(BaseModel):
+    """Response model after submitting a pipeline job."""
+
+    job_id: str
+    status: str
+
+
+class PipelineFeedbackRequest(BaseModel):
+    """Request model for submitting feedback on a pipeline segment."""
+
+    segment_index: int = Field(..., ge=0, description="Index of the segment being rated.")
+    rating: str = Field(
+        ...,
+        description="User rating: 'approve', 'reject', or a numeric score string.",
+    )
+    comment: Optional[str] = Field(None, description="Optional free-text comment.")
+
+
+class PipelineFeedbackResponse(BaseModel):
+    """Response model after submitting feedback."""
+
+    message: str

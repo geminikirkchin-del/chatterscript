@@ -218,8 +218,14 @@ NUMBER_DOT_NUMBER_PATTERN = re.compile(
 VERSION_PATTERN = re.compile(
     r"[vV]?\d+(\.\d+)+"
 )  # Matches version numbers like v1.0.2, 2.3.4
-# Pattern to find potential sentence endings (punctuation followed by quote/space/end of string).
-POTENTIAL_END_PATTERN = re.compile(r'([.!?])(["\']?)(\s+|$)')
+# Pattern to find potential sentence endings.
+# English endings (.!?) require following whitespace/end to avoid false splits in abbreviations/numbers.
+# Chinese full-width endings (。！？) are always recognized as sentence boundaries.
+POTENTIAL_END_PATTERN = re.compile(
+    r'(?P<eng>[.!?])(?P<eng_quote>["\']?)(?=\s|$)'
+    r'|'
+    r'(?P<zh>[。！？])(?P<zh_quote>["\'"＂＇“”‘’「」『』]?)'
+)
 # Pattern to detect start-of-line bullet points or numbered lists.
 # Must be at column 0 (no leading indentation) so that indented dashes
 # in narrative text (e.g. "  ---TITLE---") are not falsely matched as bullets.
@@ -952,43 +958,47 @@ def _is_valid_sentence_end(text: str, period_index: int) -> bool:
 
 def _split_text_by_punctuation(text: str) -> List[str]:
     """
-    Splits text into sentences based on common punctuation marks (.!?),
+    Splits text into sentences based on common punctuation marks (.!? and 。！？),
     while trying to avoid splitting on periods used in abbreviations or numbers.
+    Chinese full-width punctuation is always treated as a sentence boundary.
     """
     sentences: List[str] = []
     last_split_index = 0
     text_length = len(text)
 
     for match in POTENTIAL_END_PATTERN.finditer(text):
-        punctuation_char_index = match.start(1)
+        punctuation_char_index = match.start()
         punctuation_char = text[punctuation_char_index]
-        slice_end_after_punctuation = match.start(1) + 1 + len(match.group(2) or "")
+        quote = match.group("eng_quote") or match.group("zh_quote") or ""
+        slice_end_after_punctuation = match.start() + 1 + len(quote)
 
-        if punctuation_char in ["!", "?"]:
+        if punctuation_char in [".", "!", "?"]:
+            if punctuation_char == ".":
+                if (
+                    punctuation_char_index > 0 and text[punctuation_char_index - 1] == "."
+                ) or (
+                    punctuation_char_index < text_length - 1
+                    and text[punctuation_char_index + 1] == "."
+                ):
+                    continue
+
+                if not _is_valid_sentence_end(text, punctuation_char_index):
+                    continue
+
             current_sentence_text = text[
                 last_split_index:slice_end_after_punctuation
             ].strip()
             if current_sentence_text:
                 sentences.append(current_sentence_text)
             last_split_index = match.end()
-            continue
-
-        if punctuation_char == ".":
-            if (
-                punctuation_char_index > 0 and text[punctuation_char_index - 1] == "."
-            ) or (
-                punctuation_char_index < text_length - 1
-                and text[punctuation_char_index + 1] == "."
-            ):
-                continue
-
-            if _is_valid_sentence_end(text, punctuation_char_index):
-                current_sentence_text = text[
-                    last_split_index:slice_end_after_punctuation
-                ].strip()
-                if current_sentence_text:
-                    sentences.append(current_sentence_text)
-                last_split_index = match.end()
+        else:
+            # Chinese full-width punctuation (。！？) is always a sentence boundary.
+            current_sentence_text = text[
+                last_split_index:slice_end_after_punctuation
+            ].strip()
+            if current_sentence_text:
+                sentences.append(current_sentence_text)
+            last_split_index = match.end()
 
     remaining_text_segment = text[last_split_index:].strip()
     if remaining_text_segment:
@@ -1094,6 +1104,56 @@ def _preprocess_and_segment_text(full_text: str) -> List[Tuple[Optional[str], st
     return segmented_with_tags
 
 
+def _is_cjk_or_fullwidth(char: str) -> bool:
+    """
+    Returns True if the character is a CJK ideograph, Hiragana, Katakana,
+    Hangul syllable, or a full-width/CJK punctuation mark.
+    Used to decide whether to insert a space when joining sentence segments.
+    """
+    if not char:
+        return False
+    code = ord(char)
+    # CJK Unified Ideographs
+    if 0x4E00 <= code <= 0x9FFF:
+        return True
+    # CJK Unified Ideographs Extension A
+    if 0x3400 <= code <= 0x4DBF:
+        return True
+    # CJK Unified Ideographs Extension B (common supplementary range)
+    if 0x20000 <= code <= 0x2A6DF:
+        return True
+    # Hiragana, Katakana, Bopomofo
+    if 0x3040 <= code <= 0x309F or 0x30A0 <= code <= 0x30FF or 0x3100 <= code <= 0x312F:
+        return True
+    # Hangul Syllables
+    if 0xAC00 <= code <= 0xD7AF:
+        return True
+    # CJK Symbols and Punctuation
+    if 0x3000 <= code <= 0x303F:
+        return True
+    # Halfwidth and Fullwidth Forms
+    if 0xFF00 <= code <= 0xFFEF:
+        return True
+    return False
+
+
+def _join_segments_smart(segments: List[str]) -> str:
+    """
+    Joins sentence segments. Inserts a space between segments only when the
+    previous segment does not end with a CJK/full-width character. This keeps
+    Chinese/Japanese/Korean text natural while preserving spacing for Latin text.
+    """
+    if not segments:
+        return ""
+    result = segments[0]
+    for segment in segments[1:]:
+        if result and _is_cjk_or_fullwidth(result[-1]):
+            result += segment
+        else:
+            result += " " + segment
+    return result
+
+
 def chunk_text_by_sentences(
     full_text: str,
     chunk_size: int,
@@ -1138,7 +1198,7 @@ def chunk_text_by_sentences(
             current_chunk_length += 1 + segment_len
         else:
             if current_chunk_sentences:
-                text_chunks.append(" ".join(current_chunk_sentences))
+                text_chunks.append(_join_segments_smart(current_chunk_sentences))
             current_chunk_sentences = [segment_text]
             current_chunk_length = segment_len
 
@@ -1147,12 +1207,12 @@ def chunk_text_by_sentences(
                 f"A single segment (length {current_chunk_length}) exceeds chunk_size {chunk_size}. "
                 f"It will form its own chunk."
             )
-            text_chunks.append(" ".join(current_chunk_sentences))
+            text_chunks.append(_join_segments_smart(current_chunk_sentences))
             current_chunk_sentences = []
             current_chunk_length = 0
 
     if current_chunk_sentences:
-        text_chunks.append(" ".join(current_chunk_sentences))
+        text_chunks.append(_join_segments_smart(current_chunk_sentences))
 
     text_chunks = [chunk for chunk in text_chunks if chunk.strip()]
 

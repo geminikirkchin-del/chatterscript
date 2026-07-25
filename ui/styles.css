@@ -1818,3 +1818,108 @@ a.btn.disabled {
         justify-content: center;
     }
 }
+
+/* ============================================
+   Pipeline UI additions
+   ============================================ */
+
+.status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 0.25rem 0.75rem;
+    border-radius: var(--radius-full);
+    font-size: var(--text-sm);
+    font-weight: 600;
+    text-transform: capitalize;
+    background-color: var(--color-bg-surface-alt);
+    color: var(--color-text-secondary);
+    border: 1px solid var(--color-border-subtle);
+}
+
+.status-badge--pending,
+.status-badge--generating {
+    background-color: var(--color-info-bg);
+    color: var(--color-info-text);
+    border-color: var(--color-info-border);
+}
+
+.status-badge--running,
+.status-badge--verifying {
+    background-color: var(--color-warning-bg);
+    color: var(--color-warning-text);
+    border-color: var(--color-warning-border);
+}
+
+.status-badge--passed,
+.status-badge--done,
+.status-badge--success {
+    background-color: var(--color-success-bg);
+    color: var(--color-success-text);
+    border-color: var(--color-success-border);
+}
+
+.status-badge--failed,
+.status-badge--error {
+    background-color: var(--color-error-bg);
+    color: var(--color-error-text);
+    border-color: var(--color-error-border);
+}
+
+.text-success { color: var(--color-success) !important; }
+.text-error { color: var(--color-error) !important; }
+.text-info { color: var(--color-primary) !important; }
+
+.overflow-x-auto { overflow-x: auto; }
+.text-xl { font-size: var(--text-xl); }
+.font-semibold { font-weight: 600; }
+
+.pipeline-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: var(--text-sm);
+    min-width: 800px;
+}
+
+.pipeline-table th,
+.pipeline-table td {
+    padding: var(--space-3) var(--space-4);
+    text-align: left;
+    border-bottom: 1px solid var(--color-border-subtle);
+    vertical-align: top;
+}
+
+.pipeline-table th {
+    background-color: var(--color-bg-surface-alt);
+    color: var(--color-text-secondary);
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.dark .pipeline-table th {
+    background-color: var(--color-bg-surface-alt);
+}
+
+.pipeline-table tbody tr:hover {
+    background-color: var(--color-bg-accent);
+}
+
+.pipeline-audio {
+    width: 180px;
+    height: 32px;
+}
+
+.pipeline-log {
+    max-width: 280px;
+    max-height: 160px;
+    overflow: auto;
+    background-color: var(--color-bg-surface-alt);
+    border: 1px solid var(--color-border-subtle);
+    border-radius: var(--radius-md);
+    padding: var(--space-2);
+    font-size: var(--text-xs);
+    margin-top: var(--space-2);
+}
+
+#pipeline-section:not(.hidden) {
+    scroll-margin-top: var(--space-16);
+}

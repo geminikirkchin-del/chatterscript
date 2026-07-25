@@ -62,3 +62,9 @@ watchdog>=3.0.0
 unidecode>=1.3.0
 inflect>=7.0.0
 tqdm>=4.65.0
+
+# --- Chinese Text Segmentation (required by chatterbox-tts tokenizer) ---
+spacy_pkuseg>=1.0.1
+
+# --- ASR Verification (pipeline) ---
+whisperx>=3.1.1

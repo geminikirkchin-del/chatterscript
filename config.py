@@ -54,8 +54,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "repo_id": "chatterbox-turbo",  # UPDATED: Default to Turbo model
     },
     "tts_engine": {
-        "device": "auto",  # TTS processing device: 'auto', 'cuda', 'mps', or 'cpu'.
-        # 'auto' will attempt to use 'cuda' if available, then 'mps' if available, otherwise 'cpu'.
+        "device": "cuda",  # TTS processing device: 'auto', 'cuda', 'mps', or 'cpu'.
+        # Default to 'cuda' for best performance. Use 'auto' to prefer cuda then fall back to mps/cpu,
         "predefined_voices_path": str(
             DEFAULT_VOICES_PATH
         ),  # Directory for predefined voice files.
@@ -105,6 +105,23 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     },
     "debug": {  # Settings for debugging purposes
         "save_intermediate_audio": False  # If true, save intermediate audio files for debugging
+    },
+    "pipeline": {  # Long-form TTS pipeline settings
+        "max_segment_duration_sec": 50.0,  # Target max audio duration per segment.
+        "pause_ms": 150,  # Silence inserted between segments in milliseconds.
+        "max_retry_count": 3,  # Retry attempts per failed segment.
+        "verification": {  # Audio + ASR verification thresholds
+            "max_silence_ms": 300,
+            "clip_threshold": 0.99,
+            "min_rms": 0.01,
+            "max_duration_deviation": 0.30,
+        },
+        "asr": {  # whisperx ASR settings
+            "enabled": True,
+            "model": "small",
+            "similarity_threshold": 0.75,
+            "compute_type": "float16",
+        },
     },
 }
 
@@ -904,6 +921,46 @@ def get_ui_state() -> Dict[str, Any]:
     """Returns the entire UI state dictionary (for UI persistence)."""
     return config_manager.get(
         "ui_state", deepcopy(_get_default_from_structure("ui_state"))
+    )
+
+
+# Pipeline Settings Accessors
+def get_pipeline_max_segment_duration_sec() -> float:
+    """Returns the target maximum audio duration for a pipeline segment."""
+    return config_manager.get_float(
+        "pipeline.max_segment_duration_sec",
+        _get_default_from_structure("pipeline.max_segment_duration_sec"),
+    )
+
+
+def get_pipeline_pause_ms() -> int:
+    """Returns the inter-segment pause length in milliseconds."""
+    return config_manager.get_int(
+        "pipeline.pause_ms", _get_default_from_structure("pipeline.pause_ms")
+    )
+
+
+def get_pipeline_max_retry_count() -> int:
+    """Returns the maximum retry attempts for a failed pipeline segment."""
+    return config_manager.get_int(
+        "pipeline.max_retry_count",
+        _get_default_from_structure("pipeline.max_retry_count"),
+    )
+
+
+def get_pipeline_verification_thresholds() -> Dict[str, Any]:
+    """Returns the audio verification threshold dictionary."""
+    return config_manager.get(
+        "pipeline.verification",
+        deepcopy(_get_default_from_structure("pipeline.verification")),
+    )
+
+
+def get_pipeline_asr_config() -> Dict[str, Any]:
+    """Returns the ASR (whisperx) configuration dictionary."""
+    return config_manager.get(
+        "pipeline.asr",
+        deepcopy(_get_default_from_structure("pipeline.asr")),
     )
 
 
