@@ -1923,3 +1923,19 @@ a.btn.disabled {
 #pipeline-section:not(.hidden) {
     scroll-margin-top: var(--space-16);
 }
+
+.text-sm {
+    font-size: var(--text-sm);
+}
+
+.text-xs {
+    font-size: var(--text-xs);
+}
+
+.text-muted {
+    color: var(--color-text-muted);
+}
+
+.text-info {
+    color: var(--color-info, #3b82f6);
+}

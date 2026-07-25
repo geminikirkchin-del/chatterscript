@@ -597,6 +597,11 @@
                                 <a id="pipeline-final-download" href="#" class="btn secondary" download>Download Final Audio</a>
                             </div>
 
+                            <details id="pipeline-logs-panel" class="mb-6 hidden">
+                                <summary class="form-label cursor-pointer">Pipeline Logs</summary>
+                                <pre id="pipeline-logs-content" class="pipeline-log mt-2"></pre>
+                            </details>
+
                             <div class="overflow-x-auto">
                                 <table class="pipeline-table" id="pipeline-segments-table">
                                     <thead>
@@ -607,6 +612,7 @@
                                             <th>Scores</th>
                                             <th>Retries</th>
                                             <th>Failure</th>
+                                            <th>Agent Decision</th>
                                             <th>Feedback</th>
                                             <th>Logs</th>
                                         </tr>

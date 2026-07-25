@@ -1622,6 +1622,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const pipelineFinalAudio = document.getElementById('pipeline-final-audio');
     const pipelineFinalPlayer = document.getElementById('pipeline-final-player');
     const pipelineFinalDownload = document.getElementById('pipeline-final-download');
+    const pipelineLogsPanel = document.getElementById('pipeline-logs-panel');
+    const pipelineLogsContent = document.getElementById('pipeline-logs-content');
 
     const sliders = [
         { input: 'pipeline-temperature', display: 'pipeline-temperature-value' },
@@ -1779,6 +1781,7 @@ document.addEventListener('DOMContentLoaded', function () {
     function showPipelineDashboard() {
         if (pipelineDashboard) pipelineDashboard.classList.remove('hidden');
         if (pipelineFinalAudio) pipelineFinalAudio.classList.add('hidden');
+        if (pipelineLogsPanel) pipelineLogsPanel.classList.add('hidden');
         if (pipelineJobId) pipelineJobId.textContent = currentPipelineJobId || '';
         updatePipelineJobStatus('pending');
     }
@@ -1877,20 +1880,52 @@ document.addEventListener('DOMContentLoaded', function () {
             const failureCell = document.createElement('td');
             failureCell.textContent = seg.failure_reason || '—';
 
+            const agentDecisionCell = document.createElement('td');
+            const agentDecision = lastLog?.agent_decision;
+            if (agentDecision) {
+                const decisionSummary = document.createElement('div');
+                decisionSummary.className = 'text-sm';
+                const reasonDiv = document.createElement('div');
+                reasonDiv.className = 'text-info';
+                reasonDiv.textContent = agentDecision.reason || 'agent adjusted';
+                decisionSummary.appendChild(reasonDiv);
+                if (agentDecision.deltas && Object.keys(agentDecision.deltas).length) {
+                    const deltasDiv = document.createElement('div');
+                    deltasDiv.className = 'text-muted text-xs';
+                    deltasDiv.textContent = Object.entries(agentDecision.deltas)
+                        .map(([k, v]) => `${k}: ${Number(v).toFixed(2)}`)
+                        .join(', ');
+                    decisionSummary.appendChild(deltasDiv);
+                }
+                agentDecisionCell.appendChild(decisionSummary);
+            } else {
+                agentDecisionCell.textContent = '—';
+            }
+
             const feedbackCell = document.createElement('td');
             if (seg.status === 'passed' || seg.status === 'failed') {
+                const commentInput = document.createElement('input');
+                commentInput.type = 'text';
+                commentInput.className = 'form-input small mb-1';
+                commentInput.placeholder = 'Comment (optional)';
+                commentInput.style.width = '120px';
+                commentInput.dataset.segmentIndex = seg.index;
+
                 const approveBtn = document.createElement('button');
                 approveBtn.type = 'button';
                 approveBtn.className = 'btn secondary small';
                 approveBtn.textContent = '👍';
                 approveBtn.title = 'Approve';
-                approveBtn.addEventListener('click', () => submitPipelineFeedback(seg.index, 'approve', ''));
+                approveBtn.addEventListener('click', () => submitPipelineFeedback(seg.index, 'approve', commentInput.value));
                 const rejectBtn = document.createElement('button');
                 rejectBtn.type = 'button';
                 rejectBtn.className = 'btn secondary small';
                 rejectBtn.textContent = '👎';
                 rejectBtn.title = 'Reject';
-                rejectBtn.addEventListener('click', () => submitPipelineFeedback(seg.index, 'reject', ''));
+                rejectBtn.addEventListener('click', () => submitPipelineFeedback(seg.index, 'reject', commentInput.value));
+
+                feedbackCell.appendChild(commentInput);
+                feedbackCell.appendChild(document.createElement('br'));
                 feedbackCell.appendChild(approveBtn);
                 feedbackCell.appendChild(document.createTextNode(' '));
                 feedbackCell.appendChild(rejectBtn);
@@ -1919,11 +1954,51 @@ document.addEventListener('DOMContentLoaded', function () {
             tr.appendChild(scoreCell);
             tr.appendChild(retriesCell);
             tr.appendChild(failureCell);
+            tr.appendChild(agentDecisionCell);
             tr.appendChild(feedbackCell);
             tr.appendChild(logsCell);
 
             pipelineSegmentsTbody.appendChild(tr);
         });
+    }
+
+    function renderPipelineLogs(job) {
+        if (!pipelineLogsPanel || !pipelineLogsContent) return;
+        const events = [];
+        if (job.segments && job.segments.length) {
+            job.segments.forEach((seg) => {
+                events.push({
+                    time: job.created_at,
+                    segment: seg.index + 1,
+                    status: seg.status,
+                    message: `Segment ${seg.index + 1}: ${seg.status}`,
+                });
+                if (seg.failure_reason) {
+                    events.push({
+                        time: job.created_at,
+                        segment: seg.index + 1,
+                        status: seg.status,
+                        message: `Segment ${seg.index + 1} failed: ${seg.failure_reason}`,
+                    });
+                }
+                (seg.verification_log || []).forEach((log, idx) => {
+                    if (log.agent_decision) {
+                        events.push({
+                            time: job.created_at,
+                            segment: seg.index + 1,
+                            status: seg.status,
+                            message: `Segment ${seg.index + 1} attempt ${log.attempt}: agent ${log.passed ? 'passed' : 'adjusted'} — ${log.agent_decision.reason}`,
+                        });
+                    }
+                });
+            });
+        }
+        if (events.length) {
+            pipelineLogsPanel.classList.remove('hidden');
+            pipelineLogsContent.textContent = events.map((e) => e.message).join('\n');
+        } else {
+            pipelineLogsPanel.classList.add('hidden');
+        }
     }
 
     async function submitPipelineFeedback(segmentIndex, rating, comment) {
@@ -1947,6 +2022,7 @@ document.addEventListener('DOMContentLoaded', function () {
             const job = await apiFetch(`/api/tts-pipeline/${currentPipelineJobId}`);
             updatePipelineJobStatus(job.status);
             renderSegments(job.segments);
+            renderPipelineLogs(job);
             if (job.status === 'done' && job.final_audio_path) {
                 showFinalAudio(job.final_audio_path);
                 stopPipelinePolling();
