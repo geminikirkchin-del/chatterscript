@@ -11,7 +11,9 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 import soundfile as sf
 
-from pipeline.composer import compose_segments
+import subprocess
+
+from pipeline.composer import compose_segments, loudnorm_final_audio
 
 
 def _write_wav(path: Path, samples: np.ndarray, sr: int):
@@ -88,9 +90,49 @@ def test_compose_uses_target_sample_rate():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _ffmpeg_available() -> bool:
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-version"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        return result.returncode == 0
+    except Exception:
+        return False
+
+
+def test_loudnorm_final_audio():
+    if not _ffmpeg_available():
+        return
+    tmp = tempfile.mkdtemp()
+    try:
+        sr = 24000
+        # Create a loud sine-ish tone that will be pulled down by loudnorm.
+        t = np.arange(sr, dtype=np.float32) / sr
+        seg = 0.9 * np.sin(2 * np.pi * 440 * t)
+        input_path = Path(tmp) / "input.wav"
+        output_path = Path(tmp) / "output.wav"
+        _write_wav(input_path, seg, sr)
+
+        ok = loudnorm_final_audio(
+            input_path, output_path, target_lufs=-20.0, true_peak=-2.0, sample_rate=sr
+        )
+        assert ok
+        assert output_path.exists()
+
+        data, read_sr = sf.read(str(output_path), dtype="float32")
+        assert read_sr == sr
+        assert len(data) == len(seg)
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_compose_two_segments_with_silence()
     test_compose_single_segment_passthrough()
     test_compose_empty_raises()
     test_compose_uses_target_sample_rate()
+    test_loudnorm_final_audio()
     print("ALL COMPOSER TESTS PASSED")

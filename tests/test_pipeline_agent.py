@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 import numpy as np
 
 from pipeline.agent import ParameterAgent
+from pipeline.feedback import FeedbackStore, SegmentFeedback
 from pipeline.jobs import PipelineService
 from pipeline.models import PipelineJobStatus, SegmentStatus
 from pipeline.quality import QualityVerificationResult
@@ -177,3 +178,74 @@ def test_agent_lowers_temperature_on_wer_too_high():
     assert decision.gen_params["temperature"] < 0.8
     assert decision.gen_params["cfg_weight"] > 0.5
     assert "wer_too_high" in decision.reason
+
+
+def test_agent_adjusts_for_low_speaker_similarity():
+    agent = ParameterAgent()
+    layer_results = {
+        "resemblyzer_speaker": {
+            "metrics": {"cosine_similarity": 0.5},
+        },
+    }
+    decision = agent.decide(
+        base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
+        audio_failure=None,
+        asr_failure=None,
+        layer_results=layer_results,
+    )
+    assert decision.gen_params["temperature"] < 0.8
+    assert decision.gen_params["cfg_weight"] > 0.5
+    assert decision.gen_params["seed"] != 0
+    assert "speaker_similarity_low" in decision.reason
+
+
+def test_agent_adjusts_for_spectral_drift():
+    agent = ParameterAgent()
+    layer_results = {
+        "librosa_spectral": {
+            "metrics": {"spectral_contrast_ratio": 0.5, "mfcc_mse": 0.1},
+        },
+    }
+    decision = agent.decide(
+        base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
+        audio_failure=None,
+        asr_failure=None,
+        layer_results=layer_results,
+    )
+    assert decision.gen_params["exaggeration"] < 0.5
+    assert decision.gen_params["seed"] != 0
+    assert "spectral_drift" in decision.reason
+
+
+def test_feedback_metrics_average_for_same_params():
+    tmp = tempfile.mkdtemp()
+    try:
+        store = FeedbackStore(Path(tmp) / "feedback.jsonl")
+        params = {"temperature": 0.7, "cfg_weight": 0.5, "exaggeration": 0.6, "seed": 888}
+        store.append_metrics(
+            job_id="j1",
+            segment_index=0,
+            layer_results={
+                "resemblyzer_speaker": {"metrics": {"cosine_similarity": 0.6}},
+                "librosa_spectral": {"metrics": {"spectral_contrast_ratio": 0.7, "mfcc_mse": 0.08}},
+            },
+            gen_params=params,
+        )
+        store.append_metrics(
+            job_id="j1",
+            segment_index=1,
+            layer_results={
+                "resemblyzer_speaker": {"metrics": {"cosine_similarity": 0.8}},
+                "librosa_spectral": {"metrics": {"spectral_contrast_ratio": 0.9, "mfcc_mse": 0.02}},
+            },
+            gen_params=params,
+        )
+
+        agent = ParameterAgent(feedback_store=store)
+        avg_sim, avg_contrast, avg_mfcc, count = agent._feedback_metrics_for_params(params)
+        assert count == 2
+        assert avg_sim == 0.7
+        assert avg_contrast == 0.8
+        assert avg_mfcc == 0.05
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)

@@ -18,7 +18,7 @@ from config import (
 )
 from pipeline.agent import AgentDecision, ParameterAgent
 from pipeline.asr import ASRVerifier
-from pipeline.composer import compose_segments
+from pipeline.composer import compose_segments, loudnorm_final_audio
 from pipeline.feedback import FeedbackStore
 from pipeline.generator import generate_segment_audio
 from pipeline.models import (
@@ -208,18 +208,47 @@ class PipelineService:
             final_dir = self.base_dir / job_id
             final_path = final_dir / f"final.{final_format}"
 
-            if final_format == "wav":
-                ok = compose_segments(segment_files, final_path, sr=target_sr, pause_ms=pause_ms)
-            else:
-                # Compose WAV first, then encode to target format.
-                temp_wav = final_dir / "final_temp.wav"
-                ok = compose_segments(segment_files, temp_wav, sr=target_sr, pause_ms=pause_ms)
+            # Read loudnorm targets from the audio_metrics layer config.
+            verification_cfg = get_pipeline_verification_thresholds()
+            audio_metrics_cfg = verification_cfg.get("layers", {}).get("audio_metrics", {})
+            audio_metrics_thresholds = audio_metrics_cfg.get("thresholds", {})
+            target_lufs = float(audio_metrics_thresholds.get("target_lufs", -16.0))
+            true_peak = float(audio_metrics_thresholds.get("true_peak_max_dbtp", -1.5))
+
+            temp_wav = final_dir / "final_temp.wav"
+            normalized_wav = final_dir / "final_normalized.wav"
+            ok = compose_segments(segment_files, temp_wav, sr=target_sr, pause_ms=pause_ms)
+            if ok:
+                # Final loudnorm ensures consistent loudness across the whole long-form output.
+                ok = loudnorm_final_audio(
+                    temp_wav,
+                    normalized_wav,
+                    target_lufs=target_lufs,
+                    true_peak=true_peak,
+                    sample_rate=target_sr,
+                )
                 if ok:
-                    ok = self._encode_to_format(temp_wav, final_path, final_format, target_sr)
-                    try:
-                        temp_wav.unlink(missing_ok=True)
-                    except Exception:
-                        pass
+                    if final_format == "wav":
+                        try:
+                            normalized_wav.replace(final_path)
+                        except OSError:
+                            # Fallback: copy if atomic replace is unavailable.
+                            import shutil
+                            shutil.move(str(normalized_wav), str(final_path))
+                    else:
+                        ok = self._encode_to_format(
+                            normalized_wav, final_path, final_format, target_sr
+                        )
+
+            # Best-effort cleanup of intermediate composed files.
+            try:
+                temp_wav.unlink(missing_ok=True)
+            except Exception:
+                pass
+            try:
+                normalized_wav.unlink(missing_ok=True)
+            except Exception:
+                pass
 
             if not ok:
                 job.status = PipelineJobStatus.FAILED
@@ -313,6 +342,7 @@ class PipelineService:
             audio_failure=last_audio_failure,
             asr_failure=last_asr_failure,
             audio_metrics=last_audio_metrics,
+            layer_results=last_quality_result.layer_results if last_quality_result else None,
         )
         seg_record.gen_params = decision.gen_params
         passed, _, _, _, _ = self._attempt_segment(

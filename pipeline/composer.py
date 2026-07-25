@@ -1,6 +1,7 @@
 # Audio composition: concatenate segment WAVs with inter-segment silence.
 
 import logging
+import subprocess
 from pathlib import Path
 from typing import List
 
@@ -58,4 +59,76 @@ def compose_segments(
     final = np.concatenate(pieces)
     sf.write(str(output_path), final, sr, subtype="pcm_16")
     logger.info(f"Composed final audio: {output_path} ({len(final)} samples @ {sr}Hz)")
+    return True
+
+
+def loudnorm_final_audio(
+    input_path: Path,
+    output_path: Path,
+    target_lufs: float = -16.0,
+    true_peak: float = -1.5,
+    lra: float = 11.0,
+    sample_rate: int = 24000,
+) -> bool:
+    """
+    Apply FFmpeg loudnorm to the composed final audio.
+
+    This is a single-pass normalization with the measured input parameters left
+    to FFmpeg's internal lookahead. It enforces a broadcast-friendly integrated
+    loudness and true-peak ceiling on the whole long-form output.
+
+    Args:
+        input_path: composed WAV file to normalize.
+        output_path: destination for the normalized WAV file.
+        target_lufs: target integrated loudness in LUFS.
+        true_peak: maximum true peak in dBTP.
+        lra: loudness range target in LU.
+        sample_rate: output sample rate.
+
+    Returns:
+        True on success, False otherwise.
+    """
+    if not input_path.exists():
+        logger.error(f"loudnorm input not found: {input_path}")
+        return False
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    # loudnorm's TP parameter must be <= 0 dBTP.
+    tp = min(0.0, float(true_peak))
+    filter_str = (
+        f"loudnorm=print_format=json:linear=true:"
+        f"I={target_lufs}:TP={tp}:LRA={lra}"
+    )
+    cmd = [
+        "ffmpeg",
+        "-hide_banner",
+        "-y",
+        "-i", str(input_path),
+        "-af", filter_str,
+        "-ar", str(sample_rate),
+        "-ac", "1",
+        str(output_path),
+    ]
+    logger.info(f"Applying final loudnorm to {input_path}: target {target_lufs} LUFS, {tp} dBTP")
+    try:
+        result = subprocess.run(
+            cmd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            check=False,
+        )
+    except Exception as e:
+        logger.error(f"Failed to run FFmpeg loudnorm: {e}")
+        return False
+
+    if result.returncode != 0:
+        logger.error(f"FFmpeg loudnorm failed (exit {result.returncode}):\n{result.stdout[-2000:]}")
+        return False
+
+    if not output_path.exists():
+        logger.error("FFmpeg loudnorm produced no output file")
+        return False
+
+    logger.info(f"Final loudnorm complete: {output_path}")
     return True

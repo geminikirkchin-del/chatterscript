@@ -14,6 +14,22 @@ import soundfile as sf
 
 from pipeline.jobs import PipelineService
 from pipeline.models import PipelineJobStatus, SegmentStatus
+from pipeline.quality import QualityVerificationResult
+
+
+def _make_passing_quality_verifier():
+    """Return a quality verifier that always passes, for jobs tests."""
+
+    class PassingQualityVerifier:
+        def verify(self, **kwargs):
+            return QualityVerificationResult(
+                passed=True,
+                overall_score=1.0,
+                failure_reason=None,
+                layer_results={},
+            )
+
+    return PassingQualityVerifier()
 
 
 def _make_fake_synthesize(sample_rate=24000):
@@ -47,7 +63,11 @@ def test_submit_job_returns_id_and_persists():
     tmp = tempfile.mkdtemp()
     try:
         fake, calls = _make_fake_synthesize()
-        service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
         job_id = service.submit_job(
             text="Hello world. How are you?",
             voice_config={"mode": "predefined", "voice_id": "test.wav"},
@@ -65,7 +85,11 @@ def test_run_job_happy_path_composes_final():
     tmp = tempfile.mkdtemp()
     try:
         fake, calls = _make_fake_synthesize()
-        service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
         # Use a longer text so the fake synthesized audio (>= 2s) aligns with the
         # estimated duration and passes the audio-metrics dynamic-range check.
         job_id = service.submit_job(
@@ -87,7 +111,11 @@ def test_run_job_preserves_segments():
     tmp = tempfile.mkdtemp()
     try:
         fake, calls = _make_fake_synthesize()
-        service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
         job_id = service.submit_job(
             text="Sentence one is quite long and should stand alone. "
                  "Sentence two is also long enough to be its own segment. "
@@ -110,7 +138,11 @@ def test_list_jobs():
     tmp = tempfile.mkdtemp()
     try:
         fake, _ = _make_fake_synthesize()
-        service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
         ids = []
         for i in range(3):
             jid = service.submit_job(

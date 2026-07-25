@@ -13,6 +13,7 @@ import numpy as np
 from pipeline.asr import ASRVerifier, normalize_text, compute_similarity
 from pipeline.jobs import PipelineService
 from pipeline.models import PipelineJobStatus, SegmentStatus
+from pipeline.quality import QualityVerificationResult
 
 
 def test_normalize_text_removes_punctuation():
@@ -29,7 +30,8 @@ def test_compute_similarity_empty():
     assert compute_similarity("hello", "") == 0.0
 
 
-def test_asr_verifier_disabled_when_whisperx_missing():
+def test_asr_verifier_disabled_when_whisperx_missing(monkeypatch):
+    monkeypatch.setattr("pipeline.asr.WHISPERX_AVAILABLE", False)
     verifier = ASRVerifier()
     result = verifier.verify("/fake/path.wav", "hello world")
     assert result.passed
@@ -50,6 +52,21 @@ def _make_fake_asr(similarity: float, passed: bool):
     return FakeASR()
 
 
+def _make_passing_quality_verifier():
+    """Return a quality verifier that always passes, for ASR-focused tests."""
+
+    class PassingQualityVerifier:
+        def verify(self, **kwargs):
+            return QualityVerificationResult(
+                passed=True,
+                overall_score=1.0,
+                failure_reason=None,
+                layer_results={},
+            )
+
+    return PassingQualityVerifier()
+
+
 def test_asr_failure_triggers_retry_and_eventual_pass():
     tmp = tempfile.mkdtemp()
     try:
@@ -64,7 +81,10 @@ def test_asr_failure_triggers_retry_and_eventual_pass():
 
         asr = _make_fake_asr(similarity=0.5, passed=False)
         service = PipelineService(
-            base_dir=Path(tmp), synthesize_fn=fake_synthesize, asr_verifier=asr
+            base_dir=Path(tmp),
+            synthesize_fn=fake_synthesize,
+            asr_verifier=asr,
+            quality_verifier=_make_passing_quality_verifier(),
         )
         job_id = service.submit_job(
             text="This is a reasonably long sentence to avoid merging.",
@@ -97,7 +117,10 @@ def test_asr_pass_composes_final():
 
         asr = _make_fake_asr(similarity=0.9, passed=True)
         service = PipelineService(
-            base_dir=Path(tmp), synthesize_fn=fake_synthesize, asr_verifier=asr
+            base_dir=Path(tmp),
+            synthesize_fn=fake_synthesize,
+            asr_verifier=asr,
+            quality_verifier=_make_passing_quality_verifier(),
         )
         job_id = service.submit_job(
             text="This is a reasonably long sentence to avoid merging.",

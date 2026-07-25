@@ -12,6 +12,22 @@ import numpy as np
 
 from pipeline.jobs import PipelineService
 from pipeline.models import PipelineJobStatus, SegmentStatus
+from pipeline.quality import QualityVerificationResult
+
+
+def _make_passing_quality_verifier():
+    """Return a quality verifier that always passes, for retry tests."""
+
+    class PassingQualityVerifier:
+        def verify(self, **kwargs):
+            return QualityVerificationResult(
+                passed=True,
+                overall_score=1.0,
+                failure_reason=None,
+                layer_results={},
+            )
+
+    return PassingQualityVerifier()
 
 
 def _make_synthesize_with_failures(fail_indices, sample_rate=24000):
@@ -41,7 +57,11 @@ def test_failed_segment_retried_then_passes():
     try:
         # First call fails, subsequent calls succeed.
         fake, calls = _make_synthesize_with_failures(fail_indices={0})
-        service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
         # Use a longer sentence so the fake synthesized audio aligns with the
         # estimated duration and passes the audio-metrics checks.
         job_id = service.submit_job(
@@ -64,7 +84,11 @@ def test_permanent_failure_excluded_from_final():
     try:
         # All calls fail for segment 0.
         fake, calls = _make_synthesize_with_failures(fail_indices={0, 1, 2, 3, 4})
-        service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
         job_id = service.submit_job(
             text="Good sentence that is long enough. Bad sentence that is long enough.",
             voice_config={"mode": "predefined", "voice_id": "test.wav"},
@@ -86,7 +110,11 @@ def test_retry_count_recorded():
     tmp = tempfile.mkdtemp()
     try:
         fake, calls = _make_synthesize_with_failures(fail_indices={0, 1})
-        service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
         job_id = service.submit_job(
             text="One sentence only.",
             voice_config={"mode": "predefined", "voice_id": "test.wav"},
