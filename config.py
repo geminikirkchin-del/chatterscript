@@ -122,6 +122,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "similarity_threshold": 0.75,
             "compute_type": "float16",
         },
+        "generation_defaults": {  # Default TTS parameters used by the long-form pipeline.
+            "temperature": 0.7,  # Lower temperature for more stable pronunciation on long content.
+            "exaggeration": 0.6,  # Slightly raised expressiveness without instability.
+            "cfg_weight": 0.5,  # Standard classifier-free guidance weight.
+            "seed": 888,  # Fixed seed for reproducible quality across segments.
+            "speed_factor": 1.0,  # Keep natural cadence; deviating from 1.0 can cause echo.
+            "language": "zh",  # Default pipeline language for Slidev-Kw educational content.
+        },
     },
 }
 
@@ -961,6 +969,62 @@ def get_pipeline_asr_config() -> Dict[str, Any]:
     return config_manager.get(
         "pipeline.asr",
         deepcopy(_get_default_from_structure("pipeline.asr")),
+    )
+
+
+def get_pipeline_generation_defaults() -> Dict[str, Any]:
+    """Returns the default generation parameters used by the long-form pipeline."""
+    return config_manager.get(
+        "pipeline.generation_defaults",
+        deepcopy(_get_default_from_structure("pipeline.generation_defaults")),
+    )
+
+
+def get_pipeline_default_temperature() -> float:
+    """Returns the default temperature for pipeline TTS generation."""
+    return config_manager.get_float(
+        "pipeline.generation_defaults.temperature",
+        _get_default_from_structure("pipeline.generation_defaults.temperature"),
+    )
+
+
+def get_pipeline_default_exaggeration() -> float:
+    """Returns the default exaggeration for pipeline TTS generation."""
+    return config_manager.get_float(
+        "pipeline.generation_defaults.exaggeration",
+        _get_default_from_structure("pipeline.generation_defaults.exaggeration"),
+    )
+
+
+def get_pipeline_default_cfg_weight() -> float:
+    """Returns the default CFG weight for pipeline TTS generation."""
+    return config_manager.get_float(
+        "pipeline.generation_defaults.cfg_weight",
+        _get_default_from_structure("pipeline.generation_defaults.cfg_weight"),
+    )
+
+
+def get_pipeline_default_seed() -> int:
+    """Returns the default seed for pipeline TTS generation."""
+    return config_manager.get_int(
+        "pipeline.generation_defaults.seed",
+        _get_default_from_structure("pipeline.generation_defaults.seed"),
+    )
+
+
+def get_pipeline_default_speed_factor() -> float:
+    """Returns the default speed factor for pipeline TTS generation."""
+    return config_manager.get_float(
+        "pipeline.generation_defaults.speed_factor",
+        _get_default_from_structure("pipeline.generation_defaults.speed_factor"),
+    )
+
+
+def get_pipeline_default_language() -> str:
+    """Returns the default language for pipeline TTS generation."""
+    return config_manager.get_string(
+        "pipeline.generation_defaults.language",
+        _get_default_from_structure("pipeline.generation_defaults.language"),
     )
 
 

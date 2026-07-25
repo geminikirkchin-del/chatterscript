@@ -62,6 +62,12 @@ from config import (
     get_audio_output_format,
     get_pipeline_max_segment_duration_sec,
     get_pipeline_pause_ms,
+    get_pipeline_default_temperature,
+    get_pipeline_default_exaggeration,
+    get_pipeline_default_cfg_weight,
+    get_pipeline_default_seed,
+    get_pipeline_default_speed_factor,
+    get_pipeline_default_language,
 )
 
 import engine  # TTS Engine interface
@@ -1399,33 +1405,37 @@ async def custom_tts_endpoint(
 
 
 def _build_gen_params(request: PipelineSubmitRequest) -> Dict[str, Any]:
-    """Merge request overrides with config defaults for pipeline generation."""
+    """Merge request overrides with pipeline config defaults for generation."""
     return {
         "temperature": (
             request.temperature
             if request.temperature is not None
-            else get_gen_default_temperature()
+            else get_pipeline_default_temperature()
         ),
         "exaggeration": (
             request.exaggeration
             if request.exaggeration is not None
-            else get_gen_default_exaggeration()
+            else get_pipeline_default_exaggeration()
         ),
         "cfg_weight": (
             request.cfg_weight
             if request.cfg_weight is not None
-            else get_gen_default_cfg_weight()
+            else get_pipeline_default_cfg_weight()
         ),
-        "seed": request.seed if request.seed is not None else get_gen_default_seed(),
+        "seed": (
+            request.seed
+            if request.seed is not None
+            else get_pipeline_default_seed()
+        ),
         "speed_factor": (
             request.speed_factor
             if request.speed_factor is not None
-            else get_gen_default_speed_factor()
+            else get_pipeline_default_speed_factor()
         ),
         "language": (
             request.language
             if request.language is not None
-            else get_gen_default_language()
+            else get_pipeline_default_language()
         ),
     }
 
