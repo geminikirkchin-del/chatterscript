@@ -17,7 +17,6 @@ from config import (
     get_pipeline_verification_thresholds,
 )
 from pipeline.agent import AgentDecision, ParameterAgent
-from pipeline.asr import ASRVerifier
 from pipeline.composer import compose_segments, loudnorm_final_audio
 from pipeline.feedback import FeedbackStore
 from pipeline.generator import generate_segment_audio
@@ -45,7 +44,6 @@ class PipelineService:
         self,
         base_dir: Optional[Path] = None,
         synthesize_fn: Optional[SynthesizeFn] = None,
-        asr_verifier: Optional[ASRVerifier] = None,
         parameter_agent: Optional[ParameterAgent] = None,
         quality_verifier: Optional[PipelineQualityVerifier] = None,
     ):
@@ -57,39 +55,12 @@ class PipelineService:
         self.store = JobStore(self.base_dir)
         # Default to the real engine.synthesize; tests inject a mock.
         self.synthesize_fn = synthesize_fn
-        # ASR verifier is lazily initialized unless injected.
-        self._asr_verifier = asr_verifier
         # Multi-layer quality verifier is lazily initialized unless injected.
         self._quality_verifier = quality_verifier
         # Rule-based parameter agent.
         self._parameter_agent = parameter_agent
         # Feedback store for the AI agent.
         self.feedback_store = FeedbackStore(self.base_dir / "feedback.jsonl")
-
-    def _get_asr_verifier(self) -> Optional[ASRVerifier]:
-        if self._asr_verifier is None:
-            from config import get_pipeline_asr_config, get_tts_device
-
-            asr_config = get_pipeline_asr_config()
-            if not asr_config.get("enabled", True):
-                return None
-
-            # Ticket 02: ASR verification is now handled by the quality framework
-            # (whisperx_alignment + jiwer_content layers). Skip the legacy in-process
-            # ASR verifier when those layers are enabled to avoid running whisperx twice.
-            verification_cfg = get_pipeline_verification_thresholds()
-            layers = verification_cfg.get("layers", {})
-            if layers.get("whisperx_alignment", {}).get("enabled", True) or layers.get(
-                "jiwer_content", {}
-            ).get("enabled", True):
-                return None
-
-            self._asr_verifier = ASRVerifier(
-                model_name=asr_config.get("model", "small"),
-                device=get_tts_device(),
-                compute_type=asr_config.get("compute_type", "float16"),
-            )
-        return self._asr_verifier
 
     def _get_quality_verifier(self) -> PipelineQualityVerifier:
         if self._quality_verifier is None:
@@ -293,7 +264,6 @@ class PipelineService:
             "max_retry_count", get_pipeline_max_retry_count()
         )
         thresholds = self._load_verification_thresholds()
-        asr_verifier = self._get_asr_verifier()
         quality_verifier = self._get_quality_verifier()
         agent = self._get_parameter_agent()
         reference_voice_path = audio_prompt_path
@@ -322,7 +292,6 @@ class PipelineService:
                 language=language,
                 seg_path=seg_path,
                 thresholds=thresholds,
-                asr_verifier=asr_verifier,
                 quality_verifier=quality_verifier,
                 attempt=attempt,
                 agent_decision=None,
@@ -355,7 +324,6 @@ class PipelineService:
             language=language,
             seg_path=seg_path,
             thresholds=thresholds,
-            asr_verifier=asr_verifier,
             quality_verifier=quality_verifier,
             attempt=max_retries + 1,
             agent_decision=decision,
@@ -381,7 +349,6 @@ class PipelineService:
         language: str,
         seg_path: Path,
         thresholds: VerificationThresholds,
-        asr_verifier: Optional[ASRVerifier],
         quality_verifier: PipelineQualityVerifier,
         attempt: int,
         agent_decision: Optional[AgentDecision],
@@ -460,26 +427,6 @@ class PipelineService:
         else:
             audio_failure = failure_reason
 
-        asr_result = None
-
-        # Backward-compatible ASR check for deployments that still use the legacy
-        # in-process ASR verifier (disabled when whisperx_alignment / jiwer_content
-        # layers are enabled).
-        if combined_passed:
-            if asr_verifier is not None:
-                asr_result = asr_verifier.verify(
-                    str(seg_path),
-                    seg_record.text,
-                    language=language,
-                )
-                if not asr_result.passed:
-                    combined_passed = False
-                    failure_reason = asr_result.failure_reason
-                    asr_failure = asr_result.failure_reason
-                # Combine scores: 60% quality, 40% ASR.
-                asr_score = getattr(asr_result, "similarity", 1.0)
-                combined_score = 0.6 * quality_result.overall_score + 0.4 * asr_score
-
         log_entry: Dict[str, Any] = {
             "attempt": attempt,
             "passed": combined_passed,
@@ -491,14 +438,6 @@ class PipelineService:
                 "layer_results": quality_result.layer_results,
             },
         }
-        if asr_result is not None:
-            log_entry["asr"] = {
-                "passed": asr_result.passed,
-                "similarity": asr_result.similarity,
-                "transcription": asr_result.transcription,
-                "failure_reason": asr_result.failure_reason,
-                "metrics": asr_result.metrics,
-            }
         if agent_decision:
             log_entry["agent_decision"] = {
                 "reason": agent_decision.reason,
@@ -527,9 +466,6 @@ class PipelineService:
             seg_record.status = SegmentStatus.PASSED
             seg_record.audio_path = str(seg_path)
             seg_record.audio_score = quality_result.overall_score
-            seg_record.asr_score = (
-                asr_result.similarity if asr_result is not None else 1.0
-            )
             seg_record.score = combined_score
             seg_record.failure_reason = None
             seg_record.retry_count = attempt
