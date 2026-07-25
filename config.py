@@ -114,7 +114,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
             "max_silence_ms": 300,
             "clip_threshold": 0.99,
             "min_rms": 0.01,
-            "max_duration_deviation": 0.30,
+            "max_duration_deviation": 0.50,
         },
         "asr": {  # whisperx ASR settings
             "enabled": True,
