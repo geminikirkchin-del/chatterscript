@@ -67,4 +67,6 @@ tqdm>=4.65.0
 spacy_pkuseg>=1.0.1
 
 # --- ASR Verification (pipeline) ---
-whisperx>=3.1.1
+# Pinned because newer whisperx versions require torch>=2.8 which conflicts
+# with the chatterbox-tts torch==2.5.1 requirement.
+whisperx==3.1.1
