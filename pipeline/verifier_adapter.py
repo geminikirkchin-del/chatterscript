@@ -23,6 +23,7 @@ class BasicAudioVerifierAdapter(QualityVerifier):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         audio, sr = sf.read(audio_path, dtype="float32")
         if audio.ndim > 1:

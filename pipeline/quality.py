@@ -35,6 +35,7 @@ class QualityVerifier(ABC):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Run the verification layer and return a dictionary with at least:
@@ -45,6 +46,10 @@ class QualityVerifier(ABC):
         - metrics (Dict[str, Any])
 
         The returned dictionary is stored under layer_results[self.name].
+
+        Args:
+            context: Optional shared dict that layers can read/write to avoid
+                re-running expensive analysis (e.g. WhisperX transcription).
         """
         ...
 
@@ -88,7 +93,18 @@ class PipelineQualityVerifier:
 
             layers.append(FFmpegAudioMetricsVerifier())
 
-        # ASR + content layers are added by later tickets.
+        # WhisperX alignment layer: word-level confidence + text coverage.
+        if layer_config.get("whisperx_alignment", {}).get("enabled", True):
+            from pipeline.quality_layers import WhisperXAlignmentVerifier
+
+            layers.append(WhisperXAlignmentVerifier())
+
+        # jiwer content layer: WER / CER against original text.
+        if layer_config.get("jiwer_content", {}).get("enabled", True):
+            from pipeline.quality_layers import JiwerContentVerifier
+
+            layers.append(JiwerContentVerifier())
+
         # Speaker + spectral feedback layers are added by later tickets.
 
         return cls(layers=layers, layer_config=layer_config)
@@ -103,6 +119,7 @@ class PipelineQualityVerifier:
     ) -> QualityVerificationResult:
         """Run all configured layers and aggregate the result."""
         layer_results: Dict[str, Dict[str, Any]] = {}
+        shared_context: Dict[str, Any] = {}
         overall_passed = True
         failure_reason: Optional[str] = None
         scores: List[float] = []
@@ -115,6 +132,7 @@ class PipelineQualityVerifier:
                     reference_voice_path=reference_voice_path,
                     language=language,
                     expected_duration=expected_duration,
+                    context=shared_context,
                 )
             except Exception as e:
                 logger.warning(f"Verification layer '{layer.name}' failed: {e}")

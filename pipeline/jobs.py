@@ -14,6 +14,7 @@ from config import (
     get_audio_sample_rate,
     get_output_path,
     get_pipeline_max_retry_count,
+    get_pipeline_verification_thresholds,
 )
 from pipeline.agent import AgentDecision, ParameterAgent
 from pipeline.asr import ASRVerifier
@@ -72,6 +73,17 @@ class PipelineService:
             asr_config = get_pipeline_asr_config()
             if not asr_config.get("enabled", True):
                 return None
+
+            # Ticket 02: ASR verification is now handled by the quality framework
+            # (whisperx_alignment + jiwer_content layers). Skip the legacy in-process
+            # ASR verifier when those layers are enabled to avoid running whisperx twice.
+            verification_cfg = get_pipeline_verification_thresholds()
+            layers = verification_cfg.get("layers", {})
+            if layers.get("whisperx_alignment", {}).get("enabled", True) or layers.get(
+                "jiwer_content", {}
+            ).get("enabled", True):
+                return None
+
             self._asr_verifier = ASRVerifier(
                 model_name=asr_config.get("model", "small"),
                 device=get_tts_device(),
@@ -386,7 +398,18 @@ class PipelineService:
 
         sf.write(str(seg_path), audio_np, sr, subtype="pcm_16")
 
-        # Run the multi-layer quality verifier (basic audio + audio metrics for now).
+        # Failure reasons produced by ASR/content quality layers. These are treated
+        # as content failures and routed to the agent's ASR adjustment rules.
+        CONTENT_FAILURE_REASONS = {
+            "whisperx_low_confidence",
+            "text_coverage_low",
+            "wer_too_high",
+            "cer_too_high",
+            "asr_mismatch",
+            "asr_transcription_failed",
+        }
+
+        # Run the multi-layer quality verifier (basic audio + audio metrics + ASR).
         quality_result = quality_verifier.verify(
             audio_path=str(seg_path),
             original_text=seg_record.text,
@@ -398,11 +421,20 @@ class PipelineService:
         combined_passed = quality_result.passed
         combined_score = quality_result.overall_score
         failure_reason = quality_result.failure_reason
-        audio_failure = quality_result.failure_reason
+
+        # Categorize the quality failure so the agent applies the right rules.
+        audio_failure: Optional[str] = None
         asr_failure: Optional[str] = None
+        if failure_reason in CONTENT_FAILURE_REASONS:
+            asr_failure = failure_reason
+        else:
+            audio_failure = failure_reason
+
         asr_result = None
 
-        # Backward-compatible ASR check until Ticket 02 moves it into the quality framework.
+        # Backward-compatible ASR check for deployments that still use the legacy
+        # in-process ASR verifier (disabled when whisperx_alignment / jiwer_content
+        # layers are enabled).
         if combined_passed:
             if asr_verifier is not None:
                 asr_result = asr_verifier.verify(

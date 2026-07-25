@@ -90,8 +90,15 @@ class ParameterAgent:
         deltas: Dict[str, Any] = {}
         reasons: list[str] = []
 
-        # ASR mismatch: lower temperature (more deterministic), raise cfg_weight.
-        if asr_failure == "asr_mismatch":
+        # ASR / content mismatch: lower temperature (more deterministic), raise cfg_weight.
+        content_failures = (
+            "asr_mismatch",
+            "whisperx_low_confidence",
+            "text_coverage_low",
+            "wer_too_high",
+            "cer_too_high",
+        )
+        if asr_failure in content_failures:
             old_temp = params.get("temperature", 0.8)
             new_temp = max(0.1, old_temp + self.temperature_delta)
             params["temperature"] = round(new_temp, 2)
@@ -102,7 +109,7 @@ class ParameterAgent:
             params["cfg_weight"] = round(new_cfg, 2)
             deltas["cfg_weight"] = params["cfg_weight"] - old_cfg
 
-            reasons.append("asr_mismatch: lower temperature, raise cfg_weight")
+            reasons.append(f"{asr_failure}: lower temperature, raise cfg_weight")
 
         # Audio silence / low RMS: lower exaggeration.
         if audio_failure in ("long_silence", "low_rms"):

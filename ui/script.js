@@ -1840,6 +1840,18 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (audioMetrics.dynamic_range_db !== undefined) scoreParts.push(`DR: ${formatScore(audioMetrics.dynamic_range_db)} dB`);
             }
 
+            const whisperxMetrics = lastLog?.quality?.layer_results?.whisperx_alignment?.metrics;
+            if (whisperxMetrics) {
+                if (whisperxMetrics.mean_word_confidence !== undefined) scoreParts.push(`WX conf: ${formatScore(whisperxMetrics.mean_word_confidence)}`);
+                if (whisperxMetrics.text_coverage_ratio !== undefined) scoreParts.push(`WX cov: ${formatScore(whisperxMetrics.text_coverage_ratio)}`);
+            }
+
+            const jiwerMetrics = lastLog?.quality?.layer_results?.jiwer_content?.metrics;
+            if (jiwerMetrics) {
+                if (jiwerMetrics.wer !== undefined) scoreParts.push(`WER: ${formatScore(jiwerMetrics.wer)}`);
+                if (jiwerMetrics.cer !== undefined) scoreParts.push(`CER: ${formatScore(jiwerMetrics.cer)}`);
+            }
+
             const scoreCell = document.createElement('td');
             scoreCell.textContent = scoreParts.join('\n') || '—';
             scoreCell.style.whiteSpace = 'pre-line';

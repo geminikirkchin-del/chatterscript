@@ -14,6 +14,13 @@ from pipeline.quality import QualityVerifier
 
 logger = logging.getLogger(__name__)
 
+# Optional jiwer import. If unavailable, JiwerContentVerifier reports
+# jiwer_unavailable instead of crashing.
+try:
+    import jiwer
+except Exception:
+    jiwer = None  # type: ignore[assignment]
+
 
 def _run_ffmpeg_loudnorm(audio_path: str, target_lufs: float, true_peak: float) -> Dict[str, Any]:
     """
@@ -135,6 +142,7 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
         reference_voice_path: Optional[str],
         language: str,
         expected_duration: float,
+        context: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         cfg = self._config()
         target_lufs = float(cfg.get("target_lufs", -16.0))
@@ -180,6 +188,251 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
             score = 1.0
         else:
             score = 0.5  # Hard-fail layers get a baseline low score on failure.
+
+        return {
+            "passed": failure_reason is None,
+            "score": score,
+            "failure_reason": failure_reason,
+            "metrics": metrics,
+        }
+
+
+# ---------------------------------------------------------------------------
+# WhisperX alignment + jiwer content layers (Ticket 02)
+# ---------------------------------------------------------------------------
+
+
+def _get_whisperx_config() -> Dict[str, Any]:
+    """Read pipeline.asr config used by both WhisperX layers."""
+    return config_manager.get("pipeline.asr", {})
+
+
+def _run_whisperx_with_cache(
+    audio_path: str,
+    original_text: str,
+    language: str,
+    context: Optional[Dict[str, Any]],
+) -> Optional[Dict[str, Any]]:
+    """
+    Run WhisperX alignment once per segment and cache the result in context.
+
+    Both WhisperXAlignmentVerifier and JiwerContentVerifier call this helper so
+    the expensive model is loaded only once per segment.
+    """
+    context_key = f"whisperx_align:{audio_path}"
+    if context is not None:
+        cached = context.get(context_key)
+        if cached is not None:
+            return cached
+
+    asr_config = _get_whisperx_config()
+    model_name = asr_config.get("model", "small")
+    # Use the same device the TTS engine resolved to (whisperx will re-resolve
+    # 'auto' internally). 'auto' keeps the wrapper portable.
+    device = asr_config.get("device", "auto")
+
+    try:
+        from pipeline.verification_wrappers.runner import run_whisperx_align
+    except Exception as e:
+        logger.error(f"Failed to import WhisperX runner: {e}")
+        return None
+
+    result = run_whisperx_align(
+        audio_path=audio_path,
+        reference_text=original_text,
+        language=language,
+        model_name=model_name,
+        device=device,
+    )
+    if result is not None and context is not None:
+        context[context_key] = result
+    return result
+
+
+class WhisperXAlignmentVerifier(QualityVerifier):
+    """
+    Hard-fail verifier using WhisperX word-level alignment.
+
+    Checks:
+    - Mean word confidence >= threshold
+    - Text coverage ratio (transcribed vs original units) >= threshold
+    """
+
+    @property
+    def name(self) -> str:
+        return "whisperx_alignment"
+
+    def _config(self) -> Dict[str, Any]:
+        verification_cfg = config_manager.get("pipeline.verification", {})
+        layer_cfg = verification_cfg.get("layers", {}).get("whisperx_alignment", {})
+        return layer_cfg.get(
+            "thresholds",
+            {
+                "min_mean_word_confidence": 0.70,
+                "min_text_coverage_ratio": 0.90,
+            },
+        )
+
+    def verify(
+        self,
+        audio_path: str,
+        original_text: str,
+        reference_voice_path: Optional[str],
+        language: str,
+        expected_duration: float,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        cfg = self._config()
+        min_confidence = float(cfg.get("min_mean_word_confidence", 0.70))
+        min_coverage = float(cfg.get("min_text_coverage_ratio", 0.90))
+
+        result = _run_whisperx_with_cache(audio_path, original_text, language, context)
+
+        if result is None:
+            return {
+                "passed": False,
+                "score": 0.0,
+                "failure_reason": "whisperx_unavailable",
+                "metrics": {
+                    "min_mean_word_confidence": min_confidence,
+                    "min_text_coverage_ratio": min_coverage,
+                },
+            }
+
+        mean_confidence = float(result.get("mean_word_confidence", 0.0))
+        coverage_ratio = float(result.get("text_coverage_ratio", 0.0))
+
+        metrics = {
+            "mean_word_confidence": mean_confidence,
+            "text_coverage_ratio": coverage_ratio,
+            "transcription": result.get("transcription", ""),
+            "normalized_transcription": result.get("normalized_transcription", ""),
+            "normalized_reference": result.get("normalized_reference", ""),
+            "word_count": result.get("word_count", 0),
+            "reference_unit_count": result.get("reference_unit_count", 0),
+            "min_mean_word_confidence": min_confidence,
+            "min_text_coverage_ratio": min_coverage,
+        }
+
+        failure_reason: Optional[str] = None
+        if mean_confidence < min_confidence:
+            failure_reason = "whisperx_low_confidence"
+        elif coverage_ratio < min_coverage:
+            failure_reason = "text_coverage_low"
+
+        if failure_reason is None:
+            score = 1.0
+        else:
+            score = 0.5
+
+        return {
+            "passed": failure_reason is None,
+            "score": score,
+            "failure_reason": failure_reason,
+            "metrics": metrics,
+        }
+
+
+class JiwerContentVerifier(QualityVerifier):
+    """
+    Hard-fail verifier comparing WhisperX transcription to original text.
+
+    Checks:
+    - Word Error Rate (WER) <= threshold
+    - Character Error Rate (CER) <= threshold
+
+    For Chinese content, WER is computed on character-split text so it behaves
+    like a per-character word error rate.
+    """
+
+    @property
+    def name(self) -> str:
+        return "jiwer_content"
+
+    def _config(self) -> Dict[str, Any]:
+        verification_cfg = config_manager.get("pipeline.verification", {})
+        layer_cfg = verification_cfg.get("layers", {}).get("jiwer_content", {})
+        return layer_cfg.get(
+            "thresholds",
+            {
+                "max_wer": 0.15,
+                "max_cer": 0.10,
+            },
+        )
+
+    def _prepare_for_wer(self, text: str, language: str) -> str:
+        """For CJK, split into space-separated characters for jiwer WER."""
+        if language.lower().startswith("zh"):
+            # Remove spaces first, then join each character with a space.
+            chars = list(text.replace(" ", ""))
+            return " ".join(chars)
+        return text
+
+    def verify(
+        self,
+        audio_path: str,
+        original_text: str,
+        reference_voice_path: Optional[str],
+        language: str,
+        expected_duration: float,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        cfg = self._config()
+        max_wer = float(cfg.get("max_wer", 0.15))
+        max_cer = float(cfg.get("max_cer", 0.10))
+
+        result = _run_whisperx_with_cache(audio_path, original_text, language, context)
+
+        if result is None:
+            return {
+                "passed": False,
+                "score": 0.0,
+                "failure_reason": "whisperx_unavailable",
+                "metrics": {
+                    "max_wer": max_wer,
+                    "max_cer": max_cer,
+                },
+            }
+
+        reference = result.get("normalized_reference", "")
+        hypothesis = result.get("normalized_transcription", "")
+
+        if jiwer is None:
+            logger.error("jiwer is not available")
+            return {
+                "passed": False,
+                "score": 0.0,
+                "failure_reason": "jiwer_unavailable",
+                "metrics": {
+                    "max_wer": max_wer,
+                    "max_cer": max_cer,
+                },
+            }
+
+        cer = float(jiwer.cer(reference, hypothesis))
+        wer_input_ref = self._prepare_for_wer(reference, language)
+        wer_input_hyp = self._prepare_for_wer(hypothesis, language)
+        wer = float(jiwer.wer(wer_input_ref, wer_input_hyp))
+
+        metrics = {
+            "wer": round(wer, 4),
+            "cer": round(cer, 4),
+            "max_wer": max_wer,
+            "max_cer": max_cer,
+            "reference": reference,
+            "hypothesis": hypothesis,
+        }
+
+        failure_reason: Optional[str] = None
+        if wer > max_wer:
+            failure_reason = "wer_too_high"
+        elif cer > max_cer:
+            failure_reason = "cer_too_high"
+
+        if failure_reason is None:
+            score = 1.0
+        else:
+            score = 0.5
 
         return {
             "passed": failure_reason is None,

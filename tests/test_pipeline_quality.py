@@ -2,9 +2,11 @@
 
 import tempfile
 from pathlib import Path
+from typing import Any, Dict
 from unittest.mock import MagicMock
 
 import numpy as np
+import pytest
 import soundfile as sf
 
 from pipeline.quality import PipelineQualityVerifier, QualityVerificationResult
@@ -189,3 +191,271 @@ class TestPipelineQualityVerifier:
         )
         assert result.passed is True
         assert "resemblyzer_speaker" in result.layer_results
+
+
+# ---------------------------------------------------------------------------
+# Ticket 02: WhisperX alignment + jiwer content layers
+# ---------------------------------------------------------------------------
+
+
+def _make_whisperx_result(
+    mean_confidence: float = 0.85,
+    coverage_ratio: float = 0.96,
+    reference: str = "hello world",
+    transcription: str = "hello world",
+) -> Dict[str, Any]:
+    return {
+        "transcription": transcription,
+        "normalized_transcription": transcription,
+        "normalized_reference": reference,
+        "mean_word_confidence": mean_confidence,
+        "text_coverage_ratio": coverage_ratio,
+        "word_count": len(transcription.split()),
+        "reference_unit_count": len(reference.split()),
+        "language": "en",
+        "whisperx_language": "en",
+    }
+
+
+class _FakeJiwer:
+    """Minimal fake jiwer module for tests."""
+
+    @staticmethod
+    def wer(reference: str, hypothesis: str) -> float:
+        ref_words = reference.split()
+        hyp_words = hypothesis.split()
+        if not ref_words and not hyp_words:
+            return 0.0
+        if not ref_words or not hyp_words:
+            return 1.0
+        # Simple word-level error estimate: 1 - overlap / max length.
+        ref_set = set(ref_words)
+        hyp_set = set(hyp_words)
+        common = len(ref_set & hyp_set)
+        return 1.0 - common / max(len(ref_set), len(hyp_set))
+
+    @staticmethod
+    def cer(reference: str, hypothesis: str) -> float:
+        ref_chars = reference.replace(" ", "")
+        hyp_chars = hypothesis.replace(" ", "")
+        if not ref_chars and not hyp_chars:
+            return 0.0
+        if not ref_chars or not hyp_chars:
+            return 1.0
+        ref_set = set(ref_chars)
+        hyp_set = set(hyp_chars)
+        common = len(ref_set & hyp_set)
+        return 1.0 - common / max(len(ref_set), len(hyp_set))
+
+
+@pytest.fixture(autouse=True)
+def patch_jiwer(monkeypatch):
+    """Make jiwer available in tests even when not installed in the main env."""
+    monkeypatch.setattr("pipeline.quality_layers.jiwer", _FakeJiwer())
+
+
+
+class TestWhisperXAlignmentVerifier:
+    def test_passes_with_good_confidence_and_coverage(self, monkeypatch):
+        from pipeline.quality_layers import WhisperXAlignmentVerifier
+
+        def fake_run(audio_path, reference_text, language, model_name, device, **kwargs):
+            return _make_whisperx_result(mean_confidence=0.85, coverage_ratio=0.96)
+
+        monkeypatch.setattr(
+            "pipeline.verification_wrappers.runner.run_whisperx_align", fake_run
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = WhisperXAlignmentVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=None,
+                language="en",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is True
+            assert result["score"] == 1.0
+            assert result["metrics"]["mean_word_confidence"] == 0.85
+
+    def test_fails_low_confidence(self, monkeypatch):
+        from pipeline.quality_layers import WhisperXAlignmentVerifier
+
+        def fake_run(audio_path, reference_text, language, model_name, device, **kwargs):
+            return _make_whisperx_result(mean_confidence=0.50, coverage_ratio=0.96)
+
+        monkeypatch.setattr(
+            "pipeline.verification_wrappers.runner.run_whisperx_align", fake_run
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = WhisperXAlignmentVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=None,
+                language="en",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is False
+            assert result["failure_reason"] == "whisperx_low_confidence"
+
+    def test_fails_low_coverage(self, monkeypatch):
+        from pipeline.quality_layers import JiwerContentVerifier
+
+        def fake_run(audio_path, reference_text, language, model_name, device, **kwargs):
+            return _make_whisperx_result(
+                reference="hello world today",
+                transcription="hello world",
+                mean_confidence=0.85,
+                coverage_ratio=0.67,
+            )
+
+        monkeypatch.setattr(
+            "pipeline.verification_wrappers.runner.run_whisperx_align", fake_run
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = JiwerContentVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="hello world today",
+                reference_voice_path=None,
+                language="en",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is False
+            assert result["failure_reason"] == "wer_too_high"
+
+
+class TestJiwerContentVerifier:
+    def test_passes_identical_text(self, monkeypatch):
+        from pipeline.quality_layers import JiwerContentVerifier
+
+        def fake_run(audio_path, reference_text, language, model_name, device, **kwargs):
+            return _make_whisperx_result(reference="hello world", transcription="hello world")
+
+        monkeypatch.setattr(
+            "pipeline.verification_wrappers.runner.run_whisperx_align", fake_run
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = JiwerContentVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=None,
+                language="en",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is True
+            assert result["metrics"]["wer"] == 0.0
+            assert result["metrics"]["cer"] == 0.0
+
+    def test_fails_high_wer(self, monkeypatch):
+        from pipeline.quality_layers import JiwerContentVerifier
+
+        def fake_run(audio_path, reference_text, language, model_name, device, **kwargs):
+            return _make_whisperx_result(
+                reference="hello world",
+                transcription="goodbye moon",
+            )
+
+        monkeypatch.setattr(
+            "pipeline.verification_wrappers.runner.run_whisperx_align", fake_run
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = JiwerContentVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=None,
+                language="en",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is False
+            assert result["failure_reason"] == "wer_too_high"
+
+    def test_chinese_wer_uses_characters(self, monkeypatch):
+        from pipeline.quality_layers import JiwerContentVerifier
+
+        def fake_run(audio_path, reference_text, language, model_name, device, **kwargs):
+            result = _make_whisperx_result(
+                reference="你好世界",
+                transcription="你好世界",
+                mean_confidence=0.90,
+                coverage_ratio=1.0,
+            )
+            result["word_count"] = 4
+            result["reference_unit_count"] = 4
+            return result
+
+        monkeypatch.setattr(
+            "pipeline.verification_wrappers.runner.run_whisperx_align", fake_run
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = JiwerContentVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="你好世界",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=1.0,
+            )
+            assert result["passed"] is True
+            assert result["metrics"]["wer"] == 0.0
+
+
+class TestWhisperXContextSharing:
+    def test_jiwer_reuses_whisperx_result_from_context(self, monkeypatch):
+        from pipeline.quality_layers import JiwerContentVerifier, WhisperXAlignmentVerifier
+
+        call_count = {"n": 0}
+
+        def fake_run(audio_path, reference_text, language, model_name, device, **kwargs):
+            call_count["n"] += 1
+            return _make_whisperx_result(reference="hello world", transcription="hello world")
+
+        monkeypatch.setattr(
+            "pipeline.verification_wrappers.runner.run_whisperx_align", fake_run
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            align = WhisperXAlignmentVerifier()
+            jiwer_verifier = JiwerContentVerifier()
+
+            context: Dict[str, Any] = {}
+            align.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=None,
+                language="en",
+                expected_duration=1.0,
+                context=context,
+            )
+            jiwer_verifier.verify(
+                audio_path=str(path),
+                original_text="hello world",
+                reference_voice_path=None,
+                language="en",
+                expected_duration=1.0,
+                context=context,
+            )
+            assert call_count["n"] == 1, "WhisperX should only run once per segment"

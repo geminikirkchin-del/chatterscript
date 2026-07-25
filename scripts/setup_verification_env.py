@@ -26,17 +26,25 @@ DEFAULT_VENV_DIR = Path(".verification_venv")
 # Pin ranges loosely so pip can resolve a compatible set.
 REQUIREMENTS = [
     # WhisperX and its heavy dependencies.
-    "torch>=2.0.0,<2.6.0",
-    "torchaudio>=2.0.0,<2.6.0",
+    # torch>=2.6 is required so transformers can safely load alignment models
+    # that are not published as safetensors (e.g. WhisperX Chinese wav2vec2).
+    # Pin exact matching versions to avoid torch/torchaudio API mismatches.
+    "torch==2.6.0",
+    "torchaudio==2.6.0",
     "numpy<2",  # whisperx / pyannote still expect numpy 1.x
+    "scipy",
     "whisperx",
-    # Speaker embedding.
-    "resemblyzer",
+    # Speaker embedding dependencies. resemblyzer itself is installed separately
+    # with --no-deps because its declared webrtcvad dependency requires a compiler
+    # on Windows; webrtcvad-wheels provides pre-built binaries and satisfies the
+    # runtime import.
+    "webrtcvad-wheels",
     # Content accuracy.
     "jiwer",
     # Spectral analysis (also available in main env, but pinned here for isolation).
     "librosa",
     "soundfile",
+    "tqdm",
 ]
 
 
@@ -52,8 +60,29 @@ def _pip_executable(venv_dir: Path) -> Path:
     return venv_dir / "bin" / "pip"
 
 
+def _venv_module_available(python_exe: str) -> bool:
+    try:
+        subprocess.run(
+            [python_exe, "-m", "venv", "--help"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            check=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def create_venv(venv_dir: Path, base_python: str = sys.executable) -> Path:
     """Create a fresh virtual environment."""
+    if not _venv_module_available(base_python):
+        # The embedded Python may not include venv; fall back to system python.
+        fallback = "python"
+        logger.warning(
+            f"'{base_python}' does not support venv. Falling back to '{fallback}'."
+        )
+        base_python = fallback
+
     if venv_dir.exists():
         logger.warning(f"Environment already exists at {venv_dir}; reusing it.")
     else:
@@ -68,9 +97,12 @@ def create_venv(venv_dir: Path, base_python: str = sys.executable) -> Path:
 
 def install_packages(pip_exe: Path) -> None:
     """Install verification packages into the venv."""
-    logger.info("Upgrading pip...")
+    # Avoid upgrading pip while it is running; venv already provides a working pip.
+    logger.info("Ensuring setuptools and wheel are available...")
+    # ctranslate2 (a whisperx dependency) still imports pkg_resources, which was
+    # removed from setuptools 70+. Pin to the last version that ships it.
     subprocess.run(
-        [str(pip_exe), "install", "--upgrade", "pip", "setuptools", "wheel"],
+        [str(pip_exe), "install", "--upgrade", "setuptools<70", "wheel"],
         check=True,
     )
 
@@ -78,6 +110,46 @@ def install_packages(pip_exe: Path) -> None:
     cmd = [str(pip_exe), "install"] + REQUIREMENTS
     subprocess.run(cmd, check=True)
     logger.info("Verification packages installed.")
+
+    # Some packages (e.g. torch 2.6+) pull in a newer setuptools that removed
+    # pkg_resources, breaking ctranslate2. Downgrade setuptools back to the
+    # last version that ships pkg_resources.
+    logger.info("Downgrading setuptools to keep pkg_resources available...")
+    subprocess.run(
+        [str(pip_exe), "install", "--force-reinstall", "setuptools<70"],
+        check=True,
+    )
+
+    _install_resemblyzer_without_webrtcvad(pip_exe)
+
+
+def _install_resemblyzer_without_webrtcvad(pip_exe: Path) -> None:
+    """
+    Install resemblyzer while bypassing its webrtcvad build dependency.
+
+    On Windows the source distribution of webrtcvad requires Visual C++ 14.0.
+    webrtcvad-wheels (already installed above) provides pre-built binaries, so
+    we download the resemblyzer wheel and install it with --no-deps.
+    """
+    import tempfile
+
+    logger.info("Downloading resemblyzer wheel for --no-deps install...")
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_path = Path(tmp)
+        subprocess.run(
+            [str(pip_exe), "download", "--no-deps", "-d", str(tmp_path), "resemblyzer"],
+            check=True,
+        )
+        wheels = list(tmp_path.glob("resemblyzer-*.whl"))
+        if not wheels:
+            raise RuntimeError("Failed to download resemblyzer wheel.")
+        wheel = wheels[0]
+        logger.info(f"Installing resemblyzer from {wheel.name} without deps...")
+        subprocess.run(
+            [str(pip_exe), "install", "--no-deps", str(wheel)],
+            check=True,
+        )
+    logger.info("Resemblyzer installed.")
 
 
 def smoke_test(python_exe: Path) -> None:

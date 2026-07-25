@@ -13,6 +13,22 @@ import numpy as np
 from pipeline.agent import ParameterAgent
 from pipeline.jobs import PipelineService
 from pipeline.models import PipelineJobStatus, SegmentStatus
+from pipeline.quality import QualityVerificationResult
+
+
+def _make_passing_quality_verifier():
+    """Return a quality verifier that always passes, for agent tests."""
+
+    class PassingQualityVerifier:
+        def verify(self, **kwargs):
+            return QualityVerificationResult(
+                passed=True,
+                overall_score=1.0,
+                failure_reason=None,
+                layer_results={},
+            )
+
+    return PassingQualityVerifier()
 
 
 def test_agent_lowers_temperature_on_asr_mismatch():
@@ -82,7 +98,11 @@ def test_agent_recovery_after_base_retries():
     try:
         # All 4 base attempts fail, agent-adjusted attempt succeeds.
         fake, calls = _make_fake_synthesize_that_fails_until_agent(fail_until_attempt=4)
-        service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
         job_id = service.submit_job(
             text="This sentence is long enough to be its own segment.",
             voice_config={"mode": "predefined", "voice_id": "test.wav"},
@@ -104,7 +124,11 @@ def test_agent_records_decision_in_log():
     tmp = tempfile.mkdtemp()
     try:
         fake, calls = _make_fake_synthesize_that_fails_until_agent(fail_until_attempt=4)
-        service = PipelineService(base_dir=Path(tmp), synthesize_fn=fake)
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
         job_id = service.submit_job(
             text="This sentence is long enough to be its own segment.",
             voice_config={"mode": "predefined", "voice_id": "test.wav"},
@@ -128,3 +152,28 @@ if __name__ == "__main__":
     test_agent_recovery_after_base_retries()
     test_agent_records_decision_in_log()
     print("ALL AGENT TESTS PASSED")
+
+
+
+def test_agent_lowers_temperature_on_whisperx_low_confidence():
+    agent = ParameterAgent()
+    decision = agent.decide(
+        base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
+        audio_failure=None,
+        asr_failure="whisperx_low_confidence",
+    )
+    assert decision.gen_params["temperature"] < 0.8
+    assert decision.gen_params["cfg_weight"] > 0.5
+    assert "whisperx_low_confidence" in decision.reason
+
+
+def test_agent_lowers_temperature_on_wer_too_high():
+    agent = ParameterAgent()
+    decision = agent.decide(
+        base_params={"temperature": 0.8, "cfg_weight": 0.5, "exaggeration": 0.5, "seed": 0},
+        audio_failure=None,
+        asr_failure="wer_too_high",
+    )
+    assert decision.gen_params["temperature"] < 0.8
+    assert decision.gen_params["cfg_weight"] > 0.5
+    assert "wer_too_high" in decision.reason
