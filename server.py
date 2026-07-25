@@ -1555,7 +1555,7 @@ async def get_pipeline_job(job_id: str):
         job_id=job.job_id,
         status=job.status.value,
         text=job.text,
-        segments=job.segments,
+        segments=[seg.to_dict() for seg in job.segments],
         final_audio_path=job.final_audio_path,
         created_at=job.created_at,
         updated_at=job.updated_at,

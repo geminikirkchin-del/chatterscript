@@ -118,10 +118,14 @@ def verify_audio(
             metrics=metrics,
         )
 
-    # Check clipping.
+    # Check clipping. A single sample near the digital ceiling is common for
+    # normalized TTS output; flag only when a non-trivial portion of the signal
+    # is clipped so we don't reject otherwise clean audio.
     peak = _compute_peak(audio)
     metrics["peak"] = peak
-    if peak >= thresholds.clip_threshold:
+    clipped_ratio = float(np.mean(np.abs(audio) >= thresholds.clip_threshold))
+    metrics["clipped_ratio"] = clipped_ratio
+    if clipped_ratio > 0.01:
         return AudioVerificationResult(
             passed=False,
             score=0.0,
