@@ -33,6 +33,32 @@ DEFAULT_MODEL = "small"
 DEFAULT_DEVICE = "auto"
 
 
+def _normalize_zh_script(text: str) -> str:
+    """
+    Normalize Chinese text for fair WER/CER comparison.
+
+    WhisperX transcribes zh audio in Simplified Chinese with Arabic digits,
+    while scripts are often Traditional with Chinese numerals. Convert both
+    sides to the same form — Simplified script (OpenCC t2s) and Chinese
+    numerals (cn2an an2cn) — so script-variant differences don't count as
+    content errors. Both reference and transcription pass through the same
+    normalization, so either convention converges.
+    """
+    try:
+        from opencc import OpenCC
+
+        text = OpenCC("t2s").convert(text)
+    except Exception as e:
+        logger.warning(f"OpenCC unavailable, skipping t2s conversion: {e}")
+    try:
+        import cn2an
+
+        text = cn2an.transform(text, "an2cn")
+    except Exception as e:
+        logger.warning(f"cn2an unavailable, skipping digit normalization: {e}")
+    return text
+
+
 def _normalize_text(text: str, language: str = "en") -> str:
     """Strip punctuation and collapse whitespace for coverage comparison."""
     text = text.lower().strip()
@@ -42,6 +68,8 @@ def _normalize_text(text: str, language: str = "en") -> str:
         cjk_punctuation_pattern = r'[。！？，、；：“”‘’（）【】《》\u3000]'
         text = re.sub(cjk_punctuation_pattern, "", text)
     text = re.sub(r"\s+", " ", text).strip()
+    if language.lower().startswith("zh"):
+        text = _normalize_zh_script(text)
     return text
 
 

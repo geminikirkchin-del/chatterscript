@@ -41,6 +41,10 @@ REQUIREMENTS = [
     "webrtcvad-wheels",
     # Content accuracy.
     "jiwer",
+    # Chinese text normalization for WER/CER comparison (Traditional→Simplified
+    # and digit↔Chinese-numeral conversion).
+    "opencc-python-reimplemented",
+    "cn2an",
     # Spectral analysis (also available in main env, but pinned here for isolation).
     "librosa",
     "soundfile",
@@ -155,7 +159,7 @@ def _install_resemblyzer_without_webrtcvad(pip_exe: Path) -> None:
 def smoke_test(python_exe: Path) -> None:
     """Quick import check for the key tools."""
     logger.info("Running smoke tests...")
-    script = "import whisperx, resemblyzer, jiwer, librosa; print('OK')"
+    script = "import whisperx, resemblyzer, jiwer, librosa, opencc, cn2an; print('OK')"
     result = subprocess.run(
         [str(python_exe), "-c", script],
         capture_output=True,
