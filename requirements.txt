@@ -70,3 +70,7 @@ spacy_pkuseg>=1.0.1
 # Pinned because newer whisperx versions require torch>=2.8 which conflicts
 # with the chatterbox-tts torch==2.5.1 requirement.
 whisperx==3.1.1
+
+# --- Content Verification (pipeline jiwer_content quality layer) ---
+# Used in-process by pipeline/quality_layers.py to compute WER/CER.
+jiwer>=3.0
