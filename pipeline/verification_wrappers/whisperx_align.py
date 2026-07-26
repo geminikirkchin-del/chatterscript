@@ -183,8 +183,15 @@ def main() -> int:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # Force UTF-8 output so Chinese transcription text prints correctly even
+    # when the parent console codepage is cp1252 (Windows default).
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     if not Path(args.audio).exists():
         logger.error(f"Audio file not found: {args.audio}")
+        print(json.dumps({"error": f"audio file not found: {args.audio}"}, ensure_ascii=False))
         return 1
 
     try:
@@ -197,6 +204,8 @@ def main() -> int:
         )
     except Exception as e:
         logger.error(f"WhisperX processing failed: {e}", exc_info=True)
+        # Always emit JSON on stdout so the runner can parse the failure reason.
+        print(json.dumps({"error": str(e)}, ensure_ascii=False))
         return 1
 
     output = json.dumps(result, ensure_ascii=False, indent=2)

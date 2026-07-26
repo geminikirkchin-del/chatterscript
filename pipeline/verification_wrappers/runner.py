@@ -2,6 +2,7 @@
 
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -10,6 +11,20 @@ from typing import Any, Dict, Optional
 logger = logging.getLogger(__name__)
 
 DEFAULT_VENV_DIR = Path(".verification_venv")
+
+
+def _wrapper_env() -> Dict[str, str]:
+    """
+    Environment for wrapper subprocesses.
+
+    PYTHONIOENCODING forces UTF-8 stdout/stderr so wrappers can print Chinese
+    transcription text regardless of the parent process's console codepage
+    (Windows defaults to cp1252, which crashed the WhisperX wrapper when
+    printing zh transcriptions).
+    """
+    env = dict(os.environ)
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
 
 
 def _venv_python(venv_dir: Path = DEFAULT_VENV_DIR) -> Path:
@@ -94,6 +109,9 @@ def _run_subprocess_wrapper(
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            encoding="utf-8",
+            errors="replace",
+            env=_wrapper_env(),
             check=False,
             timeout=timeout,
         )
@@ -105,8 +123,17 @@ def _run_subprocess_wrapper(
         return None
 
     if result.returncode != 0:
+        # Wrappers always print a JSON error object on stdout before exiting
+        # non-zero; surface it so the real failure reason lands in the logs.
+        detail = ""
+        try:
+            parsed = json.loads(result.stdout)
+            if isinstance(parsed, dict) and parsed.get("error"):
+                detail = f"wrapper error: {parsed['error']}\n"
+        except (json.JSONDecodeError, TypeError):
+            pass
         logger.error(
-            f"{label} wrapper failed (exit {result.returncode}):\n{result.stderr[-2000:]}"
+            f"{label} wrapper failed (exit {result.returncode}):\n{detail}{result.stderr[-2000:]}"
         )
         return None
 

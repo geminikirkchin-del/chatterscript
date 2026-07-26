@@ -99,17 +99,26 @@ def main() -> int:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # Force UTF-8 output (see whisperx_align.py for rationale).
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     if not Path(args.audio).exists():
         logger.error(f"Audio file not found: {args.audio}")
+        print(json.dumps({"error": f"audio file not found: {args.audio}"}, ensure_ascii=False))
         return 1
     if not Path(args.reference_voice).exists():
         logger.error(f"Reference voice file not found: {args.reference_voice}")
+        print(json.dumps({"error": f"reference voice not found: {args.reference_voice}"}, ensure_ascii=False))
         return 1
 
     try:
         result = compute_spectral_metrics(args.audio, args.reference_voice)
     except Exception as e:
         logger.error(f"Librosa spectral processing failed: {e}", exc_info=True)
+        # Always emit JSON on stdout so the runner can parse the failure reason.
+        print(json.dumps({"error": str(e)}, ensure_ascii=False))
         return 1
 
     output = json.dumps(result, ensure_ascii=False, indent=2)

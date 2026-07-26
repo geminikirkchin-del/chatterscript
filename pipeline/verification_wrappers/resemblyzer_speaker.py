@@ -27,15 +27,21 @@ def _load_audio(path: str, sr: int = 16000) -> np.ndarray:
 
 
 def compute_similarity(audio_path: str, reference_path: str) -> Dict[str, Any]:
+    import contextlib
+
     from resemblyzer import VoiceEncoder, preprocess_wav
 
-    encoder = VoiceEncoder()
+    # VoiceEncoder() prints "Loaded the voice encoder model..." to stdout,
+    # which would corrupt the JSON protocol on stdout. Redirect library
+    # chatter to stderr so stdout stays pure JSON.
+    with contextlib.redirect_stdout(sys.stderr):
+        encoder = VoiceEncoder()
 
-    audio_wav = preprocess_wav(_load_audio(audio_path))
-    ref_wav = preprocess_wav(_load_audio(reference_path))
+        audio_wav = preprocess_wav(_load_audio(audio_path))
+        ref_wav = preprocess_wav(_load_audio(reference_path))
 
-    audio_embed = encoder.embed_utterance(audio_wav)
-    ref_embed = encoder.embed_utterance(ref_wav)
+        audio_embed = encoder.embed_utterance(audio_wav)
+        ref_embed = encoder.embed_utterance(ref_wav)
 
     # Cosine similarity.
     similarity = float(
@@ -63,17 +69,26 @@ def main() -> int:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
+    # Force UTF-8 output (see whisperx_align.py for rationale).
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
     if not Path(args.audio).exists():
         logger.error(f"Audio file not found: {args.audio}")
+        print(json.dumps({"error": f"audio file not found: {args.audio}"}, ensure_ascii=False))
         return 1
     if not Path(args.reference_voice).exists():
         logger.error(f"Reference voice file not found: {args.reference_voice}")
+        print(json.dumps({"error": f"reference voice not found: {args.reference_voice}"}, ensure_ascii=False))
         return 1
 
     try:
         result = compute_similarity(args.audio, args.reference_voice)
     except Exception as e:
         logger.error(f"Resemblyzer processing failed: {e}", exc_info=True)
+        # Always emit JSON on stdout so the runner can parse the failure reason.
+        print(json.dumps({"error": str(e)}, ensure_ascii=False))
         return 1
 
     output = json.dumps(result, ensure_ascii=False, indent=2)

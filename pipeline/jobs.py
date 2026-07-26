@@ -385,7 +385,38 @@ class PipelineService:
             )
             return AttemptResult(passed=False, quality_result=empty_quality)
 
-        sf.write(str(seg_path), audio_np, sr, subtype="pcm_16")
+        try:
+            sf.write(str(seg_path), audio_np, sr, subtype="pcm_16")
+        except Exception as e:
+            # A transient write failure (e.g. Windows file lock from a media
+            # player holding the segment open) must not kill the whole job —
+            # treat it like a generation failure so the retry loop continues.
+            logger.warning(
+                f"Job {job.job_id} segment {seg_record.index} attempt {attempt}: "
+                f"audio write failed: {e}"
+            )
+            log_entry = {
+                "attempt": attempt,
+                "passed": False,
+                "failure_reason": "audio_write_failed",
+                "metrics": {"error": str(e)},
+            }
+            if agent_decision:
+                log_entry["agent_decision"] = {
+                    "reason": agent_decision.reason,
+                    "deltas": agent_decision.deltas,
+                    "gen_params": agent_decision.gen_params,
+                }
+            seg_record.verification_log.append(log_entry)
+            seg_record.retry_count = attempt
+            self.store.save(job)
+            write_failed_quality = QualityVerificationResult(
+                passed=False,
+                overall_score=0.0,
+                failure_reason="audio_write_failed",
+                layer_results={},
+            )
+            return AttemptResult(passed=False, quality_result=write_failed_quality)
 
         # Run the multi-layer quality verifier (basic audio + audio metrics + content).
         # The audio prompt doubles as the reference voice for speaker-similarity layers.

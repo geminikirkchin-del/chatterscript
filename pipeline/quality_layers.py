@@ -220,21 +220,18 @@ class FFmpegAudioMetricsVerifier(QualityVerifier):
 
         failure_reason: Optional[str] = None
         # Check RMS first so truly silent files are flagged as low_rms (matching the
-        # legacy basic verifier behaviour) before LUFS can fail.
+        # legacy basic verifier behaviour).
         # A threshold of None means the key is not configured; that check is skipped.
         if min_rms is not None and basic["rms"] < min_rms:
             failure_reason = "low_rms"
-        elif (
-            target_lufs is not None
-            and lufs_tolerance is not None
-            and abs(input_lufs - target_lufs) > lufs_tolerance
-        ):
-            failure_reason = "lufs_out_of_range"
         elif min_dynamic_range is not None and dynamic_range_db < min_dynamic_range:
             failure_reason = "dynamic_range_low"
-        # Note: true_peak is recorded in metrics but is not a segment hard-fail.
-        # Raw TTS output often sits near 0 dBFS; final compose applies loudnorm to
-        # enforce the broadcast true-peak target (Ticket 04).
+        # Note: LUFS and true_peak are recorded in metrics but are NOT segment
+        # hard-fails. Raw single-sentence TTS output is naturally quieter than the
+        # broadcast target (-16 LUFS) because integrated loudness includes the
+        # sentence's leading/trailing pauses; the final compose applies loudnorm to
+        # enforce the broadcast loudness and true-peak targets on the whole output
+        # (Ticket 04). Hard-failing segments on LUFS rejected healthy audio.
 
         # Simple score: 1.0 if all good, otherwise proportional to how far off.
         if failure_reason is None:
