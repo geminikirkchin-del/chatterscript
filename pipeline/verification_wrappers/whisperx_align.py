@@ -13,6 +13,7 @@ Output: JSON written to stdout or --output-json PATH
 import argparse
 import json
 import logging
+import os
 import re
 import sys
 from pathlib import Path
@@ -125,6 +126,29 @@ def _whisperx_language(language: str) -> str:
     return lang.split("-")[0]
 
 
+def _register_nvidia_dll_dirs() -> None:
+    """
+    Make pip-installed CUDA DLLs (cudnn, cublas, nvrtc) discoverable on Windows.
+
+    CUDA wheels install native DLLs under <venv>/Lib/site-packages/nvidia/*/bin,
+    which is not on PATH and not a default DLL search dir. ctranslate2 loads
+    cuDNN by name (cudnn_ops_infer64_8.dll), so we register every nvidia bin
+    dir explicitly. Derived from sys.executable so it always matches the venv
+    this script is running in.
+    """
+    if sys.platform != "win32":
+        return
+    site_packages = Path(sys.executable).parent.parent / "Lib" / "site-packages"
+    nvidia_dir = site_packages / "nvidia"
+    if not nvidia_dir.exists():
+        return
+    for bin_dir in nvidia_dir.glob("*/bin"):
+        try:
+            os.add_dll_directory(str(bin_dir))
+        except (OSError, AttributeError):
+            pass
+
+
 def run_whisperx(
     audio_path: str,
     reference_text: str,
@@ -132,6 +156,8 @@ def run_whisperx(
     model_name: str = DEFAULT_MODEL,
     device: str = DEFAULT_DEVICE,
 ) -> Dict[str, Any]:
+    _register_nvidia_dll_dirs()
+
     import torch
     import whisperx
 

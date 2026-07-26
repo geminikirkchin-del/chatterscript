@@ -1441,6 +1441,8 @@ python scripts/setup_verification_env.py --cuda cu126
   ```bash
   .verification_venv/Scripts/python.exe -m pip uninstall -y torch torchaudio
   .verification_venv/Scripts/python.exe -m pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
+  # ctranslate2 (faster-whisper) needs cuDNN 8 on Windows; torch 2.6 ships cuDNN 9:
+  .verification_venv/Scripts/python.exe -m pip install "nvidia-cudnn-cu12<9"
   ```
 - The pipeline discovers the venv automatically; no server config change is needed.
 

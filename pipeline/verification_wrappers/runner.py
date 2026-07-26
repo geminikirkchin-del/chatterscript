@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_VENV_DIR = Path(".verification_venv")
 
 
-def _wrapper_env() -> Dict[str, str]:
+def _wrapper_env(venv_dir: Optional[Path] = None) -> Dict[str, str]:
     """
     Environment for wrapper subprocesses.
 
@@ -21,9 +21,20 @@ def _wrapper_env() -> Dict[str, str]:
     transcription text regardless of the parent process's console codepage
     (Windows defaults to cp1252, which crashed the WhisperX wrapper when
     printing zh transcriptions).
+
+    PATH is extended with the venv's nvidia/*/bin directories so CUDA wheels
+    (cublas, cudnn, nvrtc) installed as pip packages are discoverable by
+    native libraries like ctranslate2 — torch's CUDA wheels do not put them
+    on the system PATH (Windows).
     """
     env = dict(os.environ)
     env["PYTHONIOENCODING"] = "utf-8"
+    venv = venv_dir or DEFAULT_VENV_DIR
+    nvidia_dir = venv / "Lib" / "site-packages" / "nvidia"
+    if nvidia_dir.exists():
+        bin_dirs = [str(p) for p in nvidia_dir.glob("*/bin")]
+        if bin_dirs:
+            env["PATH"] = os.pathsep.join(bin_dirs) + os.pathsep + env.get("PATH", "")
     return env
 
 
@@ -111,7 +122,7 @@ def _run_subprocess_wrapper(
             text=True,
             encoding="utf-8",
             errors="replace",
-            env=_wrapper_env(),
+            env=_wrapper_env(venv_dir),
             check=False,
             timeout=timeout,
         )

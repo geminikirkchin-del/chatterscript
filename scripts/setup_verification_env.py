@@ -130,6 +130,16 @@ def install_torch(pip_exe: Path, cuda: Optional[str] = None) -> None:
         ]
     subprocess.run(cmd, check=True)
 
+    if cuda is not None:
+        # ctranslate2 (faster-whisper backend) needs cuDNN 8 on Windows, but
+        # torch 2.6 CUDA wheels ship cuDNN 9 — install the cuDNN 8 pip package
+        # alongside. The pipeline runner puts nvidia/*/bin on PATH for wrappers.
+        logger.info("Installing nvidia-cudnn-cu12 (8.x) for ctranslate2...")
+        subprocess.run(
+            [str(pip_exe), "install", "nvidia-cudnn-cu12<9"],
+            check=True,
+        )
+
 
 def install_packages(pip_exe: Path) -> None:
     """Install verification packages into the venv."""
