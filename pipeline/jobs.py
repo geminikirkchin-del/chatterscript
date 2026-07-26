@@ -178,6 +178,20 @@ class PipelineService:
                 )
                 if seg_path is not None:
                     segment_files.append(seg_path)
+                else:
+                    # A failed segment still has its last polished attempt on
+                    # disk — include it so the final has no narrative gaps.
+                    # Verification status stays FAILED in the dashboard; the
+                    # final simply uses the best take we could get.
+                    best_effort = (
+                        self.base_dir / job_id / "segments" / f"{seg_record.index}.wav"
+                    )
+                    if best_effort.exists():
+                        segment_files.append(best_effort)
+                        logger.warning(
+                            f"Job {job_id} segment {idx}: including unverified "
+                            f"best-effort audio (all attempts failed)"
+                        )
 
             if not segment_files:
                 job.status = PipelineJobStatus.FAILED
@@ -258,12 +272,21 @@ class PipelineService:
                 language=language,
             )
 
-        # Compose from all currently-passing segments in index order.
-        segment_files = [
-            Path(s.audio_path)
-            for s in sorted(job.segments, key=lambda s: s.index)
-            if s.status == SegmentStatus.PASSED and s.audio_path
-        ]
+        # Compose from all segments in index order. Passed segments use their
+        # verified audio; still-failing segments fall back to their last
+        # polished attempt on disk so the final has no narrative gaps.
+        segment_files = []
+        for s in sorted(job.segments, key=lambda s: s.index):
+            if s.status == SegmentStatus.PASSED and s.audio_path:
+                segment_files.append(Path(s.audio_path))
+            else:
+                best_effort = self.base_dir / job_id / "segments" / f"{s.index}.wav"
+                if best_effort.exists():
+                    segment_files.append(best_effort)
+                    logger.warning(
+                        f"Job {job_id} segment {s.index}: including unverified "
+                        f"best-effort audio (all attempts failed)"
+                    )
         if not segment_files:
             job.status = PipelineJobStatus.FAILED
             self.store.save(job)

@@ -197,10 +197,53 @@ def test_retry_failed_segments_only_regenerates_failed():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_failed_segment_audio_included_in_final():
+    """Segments that generate audio but fail verification still ship in the final."""
+    tmp = tempfile.mkdtemp()
+    try:
+        class AlwaysFailVerifier:
+            def verify(self, **kwargs):
+                return QualityVerificationResult(
+                    passed=False,
+                    overall_score=0.0,
+                    failure_reason="long_silence",
+                    layer_results={},
+                )
+
+        fake, calls = _make_synthesize_with_failures(fail_indices=set())
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=AlwaysFailVerifier(),
+        )
+        job_id = service.submit_job(
+            text="First sentence that is long enough. Second sentence that is long enough.",
+            voice_config={"mode": "predefined", "voice_id": "test.wav"},
+            gen_params={"temperature": 0.8, "language": "en", "seed": 888},
+        )
+        service.run_job_sync(job_id, max_segment_duration=50.0, pause_ms=100)
+        job = service.get_job(job_id)
+        # All segments failed verification, but the final still composed.
+        assert job.status == PipelineJobStatus.DONE, job.status
+        assert all(seg.status == SegmentStatus.FAILED for seg in job.segments)
+        assert job.final_audio_path is not None and Path(job.final_audio_path).exists()
+        # Final duration ≈ both segments + one pause => proves both were included.
+        import soundfile as sf
+
+        data, sr = sf.read(job.final_audio_path, dtype="float32")
+        expected_min = sum(
+            max(2.0, len(seg.text.split()) / 3.0) for seg in job.segments
+        )
+        assert len(data) / sr >= expected_min, len(data) / sr
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_failed_segment_retried_then_passes()
     test_permanent_failure_excluded_from_final()
     test_retry_count_recorded()
     test_base_retries_use_incrementing_seed()
     test_retry_failed_segments_only_regenerates_failed()
+    test_failed_segment_audio_included_in_final()
     print("ALL RETRY TESTS PASSED")
