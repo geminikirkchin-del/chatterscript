@@ -120,7 +120,7 @@ class PipelineService:
     def run_job_sync(
         self,
         job_id: str,
-        max_segment_duration: float = 50.0,
+        max_segment_duration: float = 15.0,
         pause_ms: float = 150.0,
     ) -> Optional[PipelineJob]:
         """

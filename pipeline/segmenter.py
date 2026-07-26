@@ -41,11 +41,14 @@ def estimate_segment_duration(text: str, language: str) -> float:
 
 def split_text_into_segments(text: str, max_duration: float, language: str = "en") -> List[str]:
     """
-    Split long text into segments targeting a maximum audio duration.
+    Split long text into segments of exactly one sentence each.
 
-    Sentences are produced with the existing sentence splitter, then greedily
-    grouped until adding the next sentence would exceed the target duration.
-    A single sentence longer than the target forms its own segment.
+    Long-form TTS quality degrades sharply when a segment packs multiple
+    sentences, so the pipeline generates one sentence per segment and lets the
+    composer add natural pauses between them. `max_duration` is the target
+    ceiling for a single sentence: a sentence whose estimated duration exceeds
+    it still forms its own segment (we never split mid-sentence) but is logged
+    for visibility.
     """
     if not text or not text.strip():
         return []
@@ -55,51 +58,17 @@ def split_text_into_segments(text: str, max_duration: float, language: str = "en
         stripped = text.strip()
         return [stripped] if stripped else []
 
-    segments: List[List[str]] = []
-    current_group: List[str] = []
-    current_duration = 0.0
-
+    segments: List[str] = []
     for sentence in sentences:
         sentence = sentence.strip()
         if not sentence:
             continue
         sentence_duration = estimate_segment_duration(sentence, language)
+        if sentence_duration > max_duration:
+            logger.warning(
+                f"Single sentence exceeds target duration "
+                f"({sentence_duration:.1f}s > {max_duration:.1f}s): {sentence[:60]}..."
+            )
+        segments.append(sentence)
 
-        if not current_group:
-            current_group.append(sentence)
-            current_duration = sentence_duration
-            continue
-
-        if current_duration + sentence_duration <= max_duration:
-            current_group.append(sentence)
-            current_duration += sentence_duration
-        else:
-            segments.append(current_group)
-            current_group = [sentence]
-            current_duration = sentence_duration
-
-    if current_group:
-        segments.append(current_group)
-
-    return [_join_group(group, language) for group in segments if group]
-
-
-def _join_delimiter(prev: str, next_: str, language: str) -> str:
-    """Return the delimiter to use between two sentence strings."""
-    if not prev:
-        return ""
-    # CJK text does not use spaces between sentences.
-    if language.lower().startswith("zh") or utils._is_cjk_or_fullwidth(prev[-1]):
-        return ""
-    return " "
-
-
-def _join_group(group: List[str], language: str) -> str:
-    """Join a group of sentences preserving natural spacing per language."""
-    if not group:
-        return ""
-    result = group[0]
-    for sentence in group[1:]:
-        delimiter = _join_delimiter(result, sentence, language)
-        result = result + delimiter + sentence
-    return result
+    return segments

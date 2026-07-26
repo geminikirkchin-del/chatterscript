@@ -107,7 +107,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "save_intermediate_audio": False  # If true, save intermediate audio files for debugging
     },
     "pipeline": {  # Long-form TTS pipeline settings
-        "max_segment_duration_sec": 50.0,  # Target max audio duration per segment.
+        "max_segment_duration_sec": 15.0,  # Target max audio duration per segment (one sentence).
         "pause_ms": 150,  # Silence inserted between segments in milliseconds.
         "max_retry_count": 3,  # Retry attempts per failed segment.
         "verification": {  # Audio + ASR verification thresholds

@@ -251,3 +251,25 @@ def test_feedback_metrics_average_for_same_params():
         assert avg_mfcc == 0.05
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_agent_never_changes_speed_on_duration_deviation():
+    agent = ParameterAgent()
+    decision = agent.decide(
+        base_params={"temperature": 0.7, "cfg_weight": 0.5, "exaggeration": 0.6, "seed": 888, "speed_factor": 1.0},
+        quality_result=_failed_quality("duration_deviation"),
+        audio_metrics={"actual_duration": 20.0, "expected_duration": 10.0},
+    )
+    assert decision.gen_params["speed_factor"] == 1.0
+    assert decision.gen_params["seed"] != 888
+    assert "duration_deviation" in decision.reason
+
+
+def test_agent_pins_speed_factor_back_to_one():
+    agent = ParameterAgent()
+    decision = agent.decide(
+        base_params={"temperature": 0.7, "cfg_weight": 0.5, "exaggeration": 0.6, "seed": 888, "speed_factor": 1.3},
+        quality_result=_failed_quality("long_silence"),
+    )
+    assert decision.gen_params["speed_factor"] == 1.0
+    assert "pin speed_factor" in decision.reason

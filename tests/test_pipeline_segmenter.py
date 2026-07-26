@@ -44,26 +44,22 @@ def test_zh_short_text_single_segment():
     assert segs[0].strip() == text.strip(), segs[0]
 
 
-def test_en_groups_short_sentences():
+def test_en_one_sentence_per_segment():
     sentences = ["Hello world.", "How are you?", "I am fine."] * 30
     text = " ".join(sentences)
-    segs = split_text_into_segments(text, max_duration=50.0, language="en")
-    assert len(segs) > 1, "long text should be split"
+    segs = split_text_into_segments(text, max_duration=15.0, language="en")
+    assert len(segs) == 90, f"expected 90 one-sentence segments, got {len(segs)}"
     for seg in segs:
-        assert estimate_segment_duration(seg, "en") <= 50.0 * 1.2, (
-            f"segment over target: {estimate_segment_duration(seg, 'en'):.1f}s -> {seg[:80]}"
-        )
+        assert seg in sentences, f"segment is not a whole sentence: {seg!r}"
 
 
-def test_zh_groups_short_sentences():
+def test_zh_one_sentence_per_segment():
     sentences = ["這是第一句。", "這是第二句。", "這是第三句。"] * 60
     text = "".join(sentences)
-    segs = split_text_into_segments(text, max_duration=50.0, language="zh")
-    assert len(segs) > 1, "long zh text should be split"
+    segs = split_text_into_segments(text, max_duration=15.0, language="zh")
+    assert len(segs) == 180, f"expected 180 one-sentence segments, got {len(segs)}"
     for seg in segs:
-        assert estimate_segment_duration(seg, "zh") <= 50.0 * 1.2, (
-            f"segment over target: {estimate_segment_duration(seg, 'zh'):.1f}s -> {seg[:80]}"
-        )
+        assert seg in sentences, f"segment is not a whole sentence: {seg!r}"
 
 
 def test_long_single_sentence_becomes_own_segment():
@@ -89,10 +85,13 @@ def test_empty_text_returns_empty():
     assert split_text_into_segments("   \n\n  ", max_duration=50.0, language="zh") == []
 
 
-def test_respects_custom_max_duration():
+def test_max_duration_never_merges_sentences():
     text = "One two three. Four five six. Seven eight nine."
     segs = split_text_into_segments(text, max_duration=2.0, language="en")
-    assert len(segs) >= 2, segs
+    assert len(segs) == 3, segs
+    assert segs[0] == "One two three.", segs
+    assert segs[1] == "Four five six.", segs
+    assert segs[2] == "Seven eight nine.", segs
 
 
 if __name__ == "__main__":
@@ -101,10 +100,10 @@ if __name__ == "__main__":
     test_estimate_empty()
     test_short_text_single_segment()
     test_zh_short_text_single_segment()
-    test_en_groups_short_sentences()
-    test_zh_groups_short_sentences()
+    test_en_one_sentence_per_segment()
+    test_zh_one_sentence_per_segment()
     test_long_single_sentence_becomes_own_segment()
     test_mixed_punctuation_zh()
     test_empty_text_returns_empty()
-    test_respects_custom_max_duration()
+    test_max_duration_never_merges_sentences()
     print("ALL SEGMENTER TESTS PASSED")
