@@ -519,6 +519,23 @@ class PipelineService:
             )
             return AttemptResult(passed=False, quality_result=write_failed_quality)
 
+        # Polish the generated audio BEFORE verification: spectral-subtract the
+        # constant vocoder noise bed, then normalize over-long pauses. The
+        # verification chain therefore checks the exact audio that ships, and
+        # the repair report keeps the model's raw behaviour visible in logs.
+        polish_report: Dict[str, Any] = {}
+        try:
+            from pipeline.polish import polish_segment_audio
+
+            polish_report = polish_segment_audio(str(seg_path))
+        except Exception as e:
+            # Polish must never kill an attempt — unpolished audio is still valid.
+            logger.warning(
+                f"Job {job.job_id} segment {seg_record.index} attempt {attempt}: "
+                f"polish failed, continuing with unpolished audio: {e}"
+            )
+            polish_report = {"error": str(e)}
+
         # Run the multi-layer quality verifier (basic audio + audio metrics + content).
         # The audio prompt doubles as the reference voice for speaker-similarity layers.
         quality_result = quality_verifier.verify(
@@ -533,6 +550,7 @@ class PipelineService:
             "attempt": attempt,
             "passed": quality_result.passed,
             "score": quality_result.overall_score,
+            "polish": polish_report,
             "quality": {
                 "passed": quality_result.passed,
                 "overall_score": quality_result.overall_score,
