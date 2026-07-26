@@ -8,13 +8,15 @@ import utils
 
 logger = logging.getLogger(__name__)
 
-# Estimated speech rates derived from Edu-content-prep length targets.
-# These are approximations; actual durations depend on the speaker and language.
+# Estimated speech rates. The zh rate is calibrated from real pipeline data
+# (86 verified segments, 46-script run): median 4.77 chars/sec, so 4.5 keeps
+# a small margin. The old 5.5 estimate was systematically too fast and made
+# every duration check fail on healthy audio.
 SPEECH_RATES = {
-    "zh": 5.5,  # ~5.5 CJK characters per second
-    "zh-cn": 5.5,
-    "zh-hk": 5.5,
-    "zh-tw": 5.5,
+    "zh": 4.5,  # ~4.5 CJK characters per second (calibrated from real runs)
+    "zh-cn": 4.5,
+    "zh-hk": 4.5,
+    "zh-tw": 4.5,
     "en": 3.0,  # ~3 words per second
     "en-us": 3.0,
     "en-gb": 3.0,

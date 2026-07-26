@@ -442,9 +442,23 @@ class JiwerContentVerifier(QualityVerifier):
         wer_input_hyp = self._prepare_for_wer(hypothesis, language)
         wer = float(jiwer.wer(wer_input_ref, wer_input_hyp))
 
+        # Absolute error counts. A relative threshold alone is statistically
+        # fragile on short sentences: 1 char wrong in 8 chars is already CER
+        # 0.125 even when the audio is fine. A rate only fails the segment when
+        # the absolute error count also reaches min_errors.
+        min_errors = _get_threshold(cfg, "min_errors", self.name)
+        min_errors = int(min_errors) if min_errors is not None else 0
+        char_out = jiwer.process_characters(reference, hypothesis)
+        char_errors = char_out.substitutions + char_out.deletions + char_out.insertions
+        word_out = jiwer.process_words(wer_input_ref, wer_input_hyp)
+        word_errors = word_out.substitutions + word_out.deletions + word_out.insertions
+
         metrics = {
             "wer": round(wer, 4),
             "cer": round(cer, 4),
+            "char_errors": char_errors,
+            "word_errors": word_errors,
+            "min_errors": min_errors,
             "max_wer": max_wer,
             "max_cer": max_cer,
             "reference": reference,
@@ -452,9 +466,9 @@ class JiwerContentVerifier(QualityVerifier):
         }
 
         failure_reason: Optional[str] = None
-        if max_wer is not None and wer > max_wer:
+        if max_wer is not None and wer > max_wer and word_errors >= min_errors:
             failure_reason = "wer_too_high"
-        elif max_cer is not None and cer > max_cer:
+        elif max_cer is not None and cer > max_cer and char_errors >= min_errors:
             failure_reason = "cer_too_high"
 
         if failure_reason is None:

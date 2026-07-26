@@ -184,57 +184,8 @@ class PipelineService:
                 self.store.save(job)
                 return job
 
-            final_format = job.pipeline_config.get(
-                "output_format", get_audio_output_format()
-            )
-            target_sr = job.pipeline_config.get(
-                "sample_rate", get_audio_sample_rate()
-            )
-            final_dir = self.base_dir / job_id
-            final_path = final_dir / f"final.{final_format}"
-
-            # Final loudnorm targets come from the dedicated broadcast-target
-            # config, independent of the lenient per-segment audio_metrics
-            # thresholds (defaults guaranteed by DEFAULT_CONFIG merge).
-            target_lufs, true_peak, lra = _final_loudnorm_targets()
-
-            temp_wav = final_dir / "final_temp.wav"
-            normalized_wav = final_dir / "final_normalized.wav"
-            ok = compose_segments(segment_files, temp_wav, sr=target_sr, pause_ms=pause_ms)
-            if ok:
-                # Final loudnorm ensures consistent loudness across the whole long-form output.
-                ok = loudnorm_final_audio(
-                    temp_wav,
-                    normalized_wav,
-                    target_lufs=target_lufs,
-                    true_peak=true_peak,
-                    lra=lra,
-                    sample_rate=target_sr,
-                )
-                if ok:
-                    if final_format == "wav":
-                        try:
-                            normalized_wav.replace(final_path)
-                        except OSError:
-                            # Fallback: copy if atomic replace is unavailable.
-                            import shutil
-                            shutil.move(str(normalized_wav), str(final_path))
-                    else:
-                        ok = self._encode_to_format(
-                            normalized_wav, final_path, final_format, target_sr
-                        )
-
-            # Best-effort cleanup of intermediate composed files.
-            try:
-                temp_wav.unlink(missing_ok=True)
-            except Exception:
-                pass
-            try:
-                normalized_wav.unlink(missing_ok=True)
-            except Exception:
-                pass
-
-            if not ok:
+            final_path = self._compose_final_audio(job, segment_files, pause_ms)
+            if final_path is None:
                 job.status = PipelineJobStatus.FAILED
                 self.store.save(job)
                 return job
@@ -250,6 +201,149 @@ class PipelineService:
             job.status = PipelineJobStatus.FAILED
             self.store.save(job)
             return job
+
+    def retry_failed_segments(
+        self,
+        job_id: str,
+        pause_ms: float = 150.0,
+    ) -> Optional[PipelineJob]:
+        """
+        Re-run only the failed segments of a finished job and recompose final.
+
+        Segments that already passed keep their verified audio; failed segments
+        are reset to the job's original generation params and go through the
+        full generate-verify-retry loop again. This is the cheap way to push a
+        job to "all passed" without regenerating everything.
+        """
+        job = self.get_job(job_id)
+        if job is None:
+            logger.error(f"Pipeline job {job_id} not found")
+            return None
+        if job.status not in (PipelineJobStatus.DONE, PipelineJobStatus.FAILED):
+            logger.warning(f"Pipeline job {job_id} is busy (status={job.status})")
+            return job
+
+        failed = [s for s in job.segments if s.status == SegmentStatus.FAILED]
+        if not failed:
+            logger.info(f"Job {job_id}: no failed segments to retry")
+            return job
+
+        synthesize_fn = self.synthesize_fn
+        if synthesize_fn is None:
+            import engine
+
+            synthesize_fn = engine.synthesize
+
+        language = job.gen_params.get("language", "en")
+        audio_prompt_path = self._resolve_audio_prompt_path(job.voice_config)
+        job.status = PipelineJobStatus.RUNNING
+
+        for seg_record in failed:
+            # Reset to the job's original params; the previous run's agent
+            # mutations belong to that attempt history.
+            seg_record.status = SegmentStatus.PENDING
+            seg_record.gen_params = dict(job.gen_params)
+            seg_record.failure_reason = None
+            seg_record.retry_count = 0
+            seg_record.audio_path = None
+            self.store.save(job)
+
+            expected_duration = estimate_segment_duration(seg_record.text, language)
+            self._generate_and_verify_segment(
+                job=job,
+                seg_record=seg_record,
+                audio_prompt_path=audio_prompt_path,
+                expected_duration=expected_duration,
+                synthesize_fn=synthesize_fn,
+                language=language,
+            )
+
+        # Compose from all currently-passing segments in index order.
+        segment_files = [
+            Path(s.audio_path)
+            for s in sorted(job.segments, key=lambda s: s.index)
+            if s.status == SegmentStatus.PASSED and s.audio_path
+        ]
+        if not segment_files:
+            job.status = PipelineJobStatus.FAILED
+            self.store.save(job)
+            return job
+
+        final_path = self._compose_final_audio(job, segment_files, pause_ms)
+        if final_path is None:
+            job.status = PipelineJobStatus.FAILED
+            self.store.save(job)
+            return job
+
+        job.final_audio_path = str(final_path)
+        job.status = PipelineJobStatus.DONE
+        self.store.save(job)
+        logger.info(f"Job {job_id} retry-failed complete: {final_path}")
+        return job
+
+    def _compose_final_audio(
+        self,
+        job: PipelineJob,
+        segment_files: List[Path],
+        pause_ms: float,
+    ) -> Optional[Path]:
+        """
+        Compose verified segment WAVs into the final output with loudnorm.
+
+        Returns the final path on success, None on failure.
+        """
+        job_id = job.job_id
+        final_format = job.pipeline_config.get(
+            "output_format", get_audio_output_format()
+        )
+        target_sr = job.pipeline_config.get(
+            "sample_rate", get_audio_sample_rate()
+        )
+        final_dir = self.base_dir / job_id
+        final_path = final_dir / f"final.{final_format}"
+
+        # Final loudnorm targets come from the dedicated broadcast-target
+        # config, independent of the lenient per-segment audio_metrics
+        # thresholds (defaults guaranteed by DEFAULT_CONFIG merge).
+        target_lufs, true_peak, lra = _final_loudnorm_targets()
+
+        temp_wav = final_dir / "final_temp.wav"
+        normalized_wav = final_dir / "final_normalized.wav"
+        ok = compose_segments(segment_files, temp_wav, sr=target_sr, pause_ms=pause_ms)
+        if ok:
+            # Final loudnorm ensures consistent loudness across the whole long-form output.
+            ok = loudnorm_final_audio(
+                temp_wav,
+                normalized_wav,
+                target_lufs=target_lufs,
+                true_peak=true_peak,
+                lra=lra,
+                sample_rate=target_sr,
+            )
+            if ok:
+                if final_format == "wav":
+                    try:
+                        normalized_wav.replace(final_path)
+                    except OSError:
+                        # Fallback: copy if atomic replace is unavailable.
+                        import shutil
+                        shutil.move(str(normalized_wav), str(final_path))
+                else:
+                    ok = self._encode_to_format(
+                        normalized_wav, final_path, final_format, target_sr
+                    )
+
+        # Best-effort cleanup of intermediate composed files.
+        try:
+            temp_wav.unlink(missing_ok=True)
+        except Exception:
+            pass
+        try:
+            normalized_wav.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+        return final_path if ok else None
 
     def _generate_and_verify_segment(
         self,
@@ -282,8 +376,15 @@ class PipelineService:
         # Track the last attempt to feed the agent in Phase 2.
         last_attempt: Optional[AttemptResult] = None
 
-        # Phase 1: base retries.
+        # Phase 1: base retries. Bump the seed per attempt so every retry is a
+        # genuinely new generation — Chatterbox is fully deterministic for a
+        # fixed seed, so without this the base retries re-verified identical
+        # audio and only the agent attempt ever rolled differently. The
+        # sequence (base_seed + attempt) stays deterministic and reproducible.
+        base_seed = seg_record.gen_params.get("seed")
         for attempt in range(max_retries + 1):
+            if base_seed is not None:
+                seg_record.gen_params["seed"] = base_seed + attempt
             result = self._attempt_segment(
                 job=job,
                 seg_record=seg_record,

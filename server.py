@@ -1473,6 +1473,45 @@ def _run_pipeline_job(job_id: str, max_segment_duration: float, pause_ms: int):
         logger.error(f"Background pipeline job {job_id} failed: {e}", exc_info=True)
 
 
+def _retry_failed_pipeline_segments(job_id: str, pause_ms: int):
+    """Background worker that re-runs only the failed segments of a job."""
+    try:
+        pipeline_service.retry_failed_segments(job_id=job_id, pause_ms=pause_ms)
+    except Exception as e:
+        logger.error(f"Background retry-failed for job {job_id} failed: {e}", exc_info=True)
+
+
+@app.post(
+    "/api/tts-pipeline/{job_id}/retry-failed",
+    tags=["TTS Pipeline"],
+    summary="Re-run only the failed segments of a finished pipeline job",
+    response_model=PipelineSubmitResponse,
+    responses={
+        404: {"model": ErrorResponse, "description": "Job not found."},
+        409: {"model": ErrorResponse, "description": "Job is still running."},
+    },
+)
+async def retry_failed_pipeline_segments(job_id: str, background_tasks: BackgroundTasks):
+    """
+    Re-generate only the failed segments of a DONE/FAILED job, keeping the
+    already-verified audio of passed segments, then recompose the final audio.
+    Returns immediately; poll GET /api/tts-pipeline/{job_id} for status.
+    """
+    job = pipeline_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline job '{job_id}' not found.")
+    if job.status not in (PipelineJobStatus.DONE, PipelineJobStatus.FAILED):
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pipeline job '{job_id}' is still running (status={job.status.value}).",
+        )
+    background_tasks.add_task(
+        _retry_failed_pipeline_segments, job_id, get_pipeline_pause_ms()
+    )
+    logger.info(f"Submitted retry-failed for pipeline job {job_id}")
+    return PipelineSubmitResponse(job_id=job_id, status=PipelineJobStatus.RUNNING.value)
+
+
 @app.post(
     "/api/tts-pipeline",
     tags=["TTS Pipeline"],

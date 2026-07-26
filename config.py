@@ -145,6 +145,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                     "thresholds": {
                         "max_wer": 0.15,
                         "max_cer": 0.10,
+                        # Minimum absolute error count before a WER/CER rate may
+                        # fail a segment. Guards tiny sentences where 1 char of
+                        # difference in 8 chars is already CER 0.125.
+                        "min_errors": 3,
                     },
                 },
                 "resemblyzer_speaker": {

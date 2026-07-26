@@ -127,8 +127,80 @@ def test_retry_count_recorded():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_base_retries_use_incrementing_seed():
+    """Fixed-seed jobs must still get a fresh roll per attempt (seed + attempt)."""
+    tmp = tempfile.mkdtemp()
+    try:
+        fake, calls = _make_synthesize_with_failures(fail_indices={0, 1, 2})
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
+        job_id = service.submit_job(
+            text="This sentence is long enough to be one segment.",
+            voice_config={"mode": "predefined", "voice_id": "test.wav"},
+            gen_params={"temperature": 0.8, "language": "en", "seed": 888},
+        )
+        service.run_job_sync(job_id, max_segment_duration=50.0, pause_ms=100)
+        job = service.get_job(job_id)
+        assert job.status == PipelineJobStatus.DONE, job.status
+        seeds = [c["seed"] for c in calls]
+        assert seeds[:3] == [888, 889, 890], seeds
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
+def test_retry_failed_segments_only_regenerates_failed():
+    tmp = tempfile.mkdtemp()
+    try:
+        calls = []
+
+        def fake_synthesize(text, audio_prompt_path=None, **kwargs):
+            calls.append(text)
+            # The bad sentence fails all 5 attempts of the first job run
+            # (4 base + 1 agent), then succeeds on the retry-failed pass.
+            bad_calls = len([c for c in calls if "Bad" in c])
+            if "Bad sentence" in text and bad_calls <= 5:
+                return None, None
+            words = max(1, len(text.split()))
+            duration = max(2.0, words / 3.0)
+            samples = np.full(int(duration * 24000), 0.3, dtype=np.float32)
+            return samples, 24000
+
+        service = PipelineService(
+            base_dir=Path(tmp),
+            synthesize_fn=fake_synthesize,
+            quality_verifier=_make_passing_quality_verifier(),
+        )
+        job_id = service.submit_job(
+            text="Good sentence that is long enough. Bad sentence that is long enough.",
+            voice_config={"mode": "predefined", "voice_id": "test.wav"},
+            gen_params={"temperature": 0.8, "language": "en", "seed": 888},
+        )
+        service.run_job_sync(job_id, max_segment_duration=50.0, pause_ms=100)
+        job = service.get_job(job_id)
+        assert job.status == PipelineJobStatus.DONE
+        statuses = {seg.status for seg in job.segments}
+        assert SegmentStatus.FAILED in statuses
+        calls_after_first_run = len(calls)
+
+        job = service.retry_failed_segments(job_id)
+        assert job is not None
+        assert job.status == PipelineJobStatus.DONE
+        for seg in job.segments:
+            assert seg.status == SegmentStatus.PASSED
+        # Only the failed segment was regenerated (5 attempts max), not the passed one.
+        assert len(calls) - calls_after_first_run <= 5
+        assert Path(job.final_audio_path).exists()
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_failed_segment_retried_then_passes()
     test_permanent_failure_excluded_from_final()
     test_retry_count_recorded()
+    test_base_retries_use_incrementing_seed()
+    test_retry_failed_segments_only_regenerates_failed()
     print("ALL RETRY TESTS PASSED")

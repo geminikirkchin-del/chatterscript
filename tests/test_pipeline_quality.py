@@ -278,6 +278,40 @@ class _FakeJiwer:
         common = len(ref_set & hyp_set)
         return 1.0 - common / max(len(ref_set), len(hyp_set))
 
+    @staticmethod
+    def process_characters(reference: str, hypothesis: str):
+        return _process_alignment(list(reference), list(hypothesis))
+
+    @staticmethod
+    def process_words(reference: str, hypothesis: str):
+        return _process_alignment(reference.split(), hypothesis.split())
+
+
+class _ProcessOutput:
+    def __init__(self, substitutions: int, deletions: int, insertions: int, hits: int):
+        self.substitutions = substitutions
+        self.deletions = deletions
+        self.insertions = insertions
+        self.hits = hits
+
+
+def _process_alignment(ref_items, hyp_items) -> _ProcessOutput:
+    """Approximate jiwer's S/D/I counts using difflib opcodes."""
+    import difflib
+
+    sm = difflib.SequenceMatcher(a=ref_items, b=hyp_items, autojunk=False)
+    subs = dels = ins = hits = 0
+    for tag, a1, a2, b1, b2 in sm.get_opcodes():
+        if tag == "equal":
+            hits += a2 - a1
+        elif tag == "replace":
+            subs += max(a2 - a1, b2 - b1)
+        elif tag == "delete":
+            dels += a2 - a1
+        elif tag == "insert":
+            ins += b2 - b1
+    return _ProcessOutput(subs, dels, ins, hits)
+
 
 @pytest.fixture(autouse=True)
 def patch_jiwer(monkeypatch):
@@ -365,7 +399,7 @@ class TestWhisperXAlignmentVerifier:
             context = VerificationContext(
                 whisperx_result=_make_whisperx_result(
                     reference="hello world today",
-                    transcription="hello world",
+                    transcription="goodbye moon sun",
                     mean_confidence=0.85,
                     coverage_ratio=0.67,
                 )
@@ -416,13 +450,13 @@ class TestJiwerContentVerifier:
             verifier = JiwerContentVerifier()
             context = VerificationContext(
                 whisperx_result=_make_whisperx_result(
-                    reference="hello world",
-                    transcription="goodbye moon",
+                    reference="hello world today",
+                    transcription="goodbye moon sun",
                 )
             )
             result = verifier.verify(
                 audio_path=str(path),
-                original_text="hello world",
+                original_text="hello world today",
                 reference_voice_path=None,
                 language="en",
                 expected_duration=1.0,
@@ -457,6 +491,61 @@ class TestJiwerContentVerifier:
             )
             assert result.passed is True
             assert result.metrics["wer"] == 0.0
+
+    def test_tiny_sentence_below_error_floor_passes(self):
+        """1 char wrong in an 8-char sentence is CER 0.125 but must not fail."""
+        from pipeline.quality_layers import JiwerContentVerifier
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = JiwerContentVerifier()
+            context = VerificationContext(
+                whisperx_result=_make_whisperx_result(
+                    reference="第一永遠先問需求",
+                    transcription="第一永遠先問需要",  # 1 char different
+                    mean_confidence=0.99,
+                    coverage_ratio=1.0,
+                )
+            )
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="第一永遠先問需求",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=1.0,
+                context=context,
+            )
+            assert result.passed is True
+            assert result.metrics["char_errors"] == 1
+
+    def test_error_floor_still_fails_real_errors(self):
+        """5 char errors in 10 chars exceeds both the rate and the floor."""
+        from pipeline.quality_layers import JiwerContentVerifier
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = JiwerContentVerifier()
+            context = VerificationContext(
+                whisperx_result=_make_whisperx_result(
+                    reference="這是一個測試句子範例",
+                    transcription="這是二個無驗句子錯誤",  # 5 chars different
+                    mean_confidence=0.9,
+                    coverage_ratio=1.0,
+                )
+            )
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="這是一個測試句子範例",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=1.0,
+                context=context,
+            )
+            assert result.passed is False
+            assert result.failure_reason in ("wer_too_high", "cer_too_high")
+            assert result.metrics["char_errors"] >= 3
 
 
 class TestWhisperXContextSharing:
