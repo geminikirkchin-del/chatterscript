@@ -1411,6 +1411,39 @@ Set the `CUDA_VISIBLE_DEVICES` environment variable **before** running `python s
 
 **Note:** `CUDA_VISIBLE_DEVICES` selects GPUs; it does **not** fix OOM errors if the chosen GPU lacks sufficient memory.
 
+### Pipeline Verification Environment (long-form TTS)
+
+The long-form pipeline (`/api/tts-pipeline`) verifies every segment with WhisperX
+alignment, jiwer content checks, Resemblyzer speaker similarity, and Librosa
+spectral analysis. These tools run in an **isolated venv** (`.verification_venv/`)
+so their dependencies (e.g. a different torch than the TTS engine) never conflict
+with the main runtime.
+
+**Setup (CPU — slow but works everywhere):**
+```bash
+python scripts/setup_verification_env.py
+```
+
+**Setup with CUDA (recommended if you have an NVIDIA GPU — WhisperX is ~5-10x faster):**
+```bash
+# 1. Check your driver's max CUDA version first:
+nvidia-smi    # e.g. "CUDA Version: 12.8" -> cu126 or cu124 both work
+
+# 2. Install with a matching CUDA build:
+python scripts/setup_verification_env.py --cuda cu126
+```
+
+**Notes:**
+- The default (no `--cuda`) installs the **CPU** torch wheel. On long scripts
+  (100+ segments) CPU verification dominates the runtime — use `--cuda` if possible.
+- The smoke test at the end prints `torch cuda: True/False` so you can confirm.
+- To switch an existing venv from CPU to CUDA torch:
+  ```bash
+  .verification_venv/Scripts/python.exe -m pip uninstall -y torch torchaudio
+  .verification_venv/Scripts/python.exe -m pip install torch==2.6.0 torchaudio==2.6.0 --index-url https://download.pytorch.org/whl/cu126
+  ```
+- The pipeline discovers the venv automatically; no server config change is needed.
+
 ### Verification Commands
 
 **Check Python version:**

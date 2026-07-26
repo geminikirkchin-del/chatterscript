@@ -17,6 +17,7 @@ import logging
 import subprocess
 import sys
 from pathlib import Path
+from typing import Optional
 
 logger = logging.getLogger(__name__)
 
@@ -24,13 +25,13 @@ DEFAULT_VENV_DIR = Path(".verification_venv")
 
 # Core packages for the verification stack.
 # Pin ranges loosely so pip can resolve a compatible set.
+# NOTE: torch/torchaudio are intentionally NOT listed here — they are installed
+# separately by install_torch(), which can target either CPU (PyPI default) or a
+# CUDA build (pytorch.org index) via the --cuda flag.
 REQUIREMENTS = [
     # WhisperX and its heavy dependencies.
     # torch>=2.6 is required so transformers can safely load alignment models
     # that are not published as safetensors (e.g. WhisperX Chinese wav2vec2).
-    # Pin exact matching versions to avoid torch/torchaudio API mismatches.
-    "torch==2.6.0",
-    "torchaudio==2.6.0",
     "numpy<2",  # whisperx / pyannote still expect numpy 1.x
     "scipy",
     "whisperx",
@@ -50,6 +51,15 @@ REQUIREMENTS = [
     "soundfile",
     "tqdm",
 ]
+
+TORCH_VERSION = "2.6.0"
+TORCHAUDIO_VERSION = "2.6.0"
+# CUDA wheels live on the pytorch.org index, keyed by CUDA runtime version.
+CUDA_INDEX_URLS = {
+    "cu124": "https://download.pytorch.org/whl/cu124",
+    "cu126": "https://download.pytorch.org/whl/cu126",
+    "cu128": "https://download.pytorch.org/whl/cu128",
+}
 
 
 def _python_executable(venv_dir: Path) -> Path:
@@ -97,6 +107,28 @@ def create_venv(venv_dir: Path, base_python: str = sys.executable) -> Path:
         )
         logger.info("Virtual environment created.")
     return _python_executable(venv_dir)
+
+
+def install_torch(pip_exe: Path, cuda: Optional[str] = None) -> None:
+    """
+    Install torch/torchaudio into the venv, CPU or CUDA build.
+
+    The PyPI wheels are CPU-only; CUDA wheels come from the pytorch.org index.
+    Pass cuda="cu126" (etc.) for a CUDA build matching your driver — check
+    `nvidia-smi` for the maximum supported CUDA version and pick at or below it.
+    """
+    if cuda is None:
+        logger.info(f"Installing CPU torch=={TORCH_VERSION} from PyPI...")
+        cmd = [str(pip_exe), "install", f"torch=={TORCH_VERSION}", f"torchaudio=={TORCHAUDIO_VERSION}"]
+    else:
+        index_url = CUDA_INDEX_URLS[cuda]
+        logger.info(f"Installing CUDA torch=={TORCH_VERSION} ({cuda}) from {index_url}...")
+        cmd = [
+            str(pip_exe), "install",
+            f"torch=={TORCH_VERSION}", f"torchaudio=={TORCHAUDIO_VERSION}",
+            "--index-url", index_url,
+        ]
+    subprocess.run(cmd, check=True)
 
 
 def install_packages(pip_exe: Path) -> None:
@@ -159,7 +191,10 @@ def _install_resemblyzer_without_webrtcvad(pip_exe: Path) -> None:
 def smoke_test(python_exe: Path) -> None:
     """Quick import check for the key tools."""
     logger.info("Running smoke tests...")
-    script = "import whisperx, resemblyzer, jiwer, librosa, opencc, cn2an; print('OK')"
+    script = (
+        "import whisperx, resemblyzer, jiwer, librosa, opencc, cn2an, torch; "
+        "print('OK, torch cuda:', torch.cuda.is_available())"
+    )
     result = subprocess.run(
         [str(python_exe), "-c", script],
         capture_output=True,
@@ -192,6 +227,13 @@ def main() -> int:
         action="store_true",
         help="Skip the post-install smoke test",
     )
+    parser.add_argument(
+        "--cuda",
+        choices=sorted(CUDA_INDEX_URLS.keys()),
+        default=None,
+        help="Install a CUDA torch build (e.g. cu126) instead of the CPU wheel. "
+        "Check `nvidia-smi` for your driver's max CUDA version and pick at or below it.",
+    )
     args = parser.parse_args()
 
     logging.basicConfig(
@@ -203,6 +245,7 @@ def main() -> int:
     try:
         python_exe = create_venv(args.venv_dir, args.base_python)
         pip_exe = _pip_executable(args.venv_dir)
+        install_torch(pip_exe, cuda=args.cuda)
         install_packages(pip_exe)
         if not args.skip_smoke:
             smoke_test(python_exe)
