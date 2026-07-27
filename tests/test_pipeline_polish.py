@@ -170,10 +170,50 @@ def test_job_polishes_segments_before_verification():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_compose_polishes_legacy_unpolished_segments():
+    """_compose_final_audio must polish segment files that predate the polish step."""
+    from pipeline.jobs import PipelineService
+    from pipeline.models import PipelineJob, PipelineJobStatus
+
+    tmp = tempfile.mkdtemp()
+    try:
+        service = PipelineService(base_dir=Path(tmp), synthesize_fn=lambda **k: (None, None))
+        job_id = "pipe-legacy"
+        job = PipelineJob(
+            job_id=job_id,
+            text="legacy",
+            voice_config={"mode": "predefined", "voice_id": "test.wav"},
+            gen_params={"language": "en"},
+            status=PipelineJobStatus.DONE,
+            segments=[],
+            created_at=0.0,
+            updated_at=0.0,
+            pipeline_config={},
+        )
+        service.store.save(job)
+
+        # A "legacy" segment file with a 1.2s pause and no polish history.
+        seg_dir = Path(tmp) / job_id / "segments"
+        seg_dir.mkdir(parents=True)
+        audio = np.concatenate([_tone(0.5), _silence(1.2), _tone(0.5)])
+        seg_path = seg_dir / "0.wav"
+        _write(seg_path, audio)
+        before_len = len(sf.read(str(seg_path), dtype="float32")[0])
+
+        final_path = service._compose_final_audio(job, [seg_path], pause_ms=100)
+        assert final_path is not None and Path(final_path).exists()
+
+        after_len = len(sf.read(str(seg_path), dtype="float32")[0])
+        assert after_len < before_len - 0.5 * SR, "legacy segment must be polished at compose"
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     test_long_pause_compressed_to_target()
     test_head_and_tail_silence_trimmed()
     test_natural_pauses_untouched()
     test_denoise_reduces_noise_floor()
     test_job_polishes_segments_before_verification()
+    test_compose_polishes_legacy_unpolished_segments()
     print("ALL POLISH TESTS PASSED")

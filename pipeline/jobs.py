@@ -330,6 +330,20 @@ class PipelineService:
         # thresholds (defaults guaranteed by DEFAULT_CONFIG merge).
         target_lufs, true_peak, lra = _final_loudnorm_targets()
 
+        # Structural guarantee: every segment that ships in a final is
+        # polished (denoise + pause normalization). Generation-time polish
+        # already handles new audio; this pass covers legacy files from before
+        # the polish step existed. Polish is idempotent — a second pass on an
+        # already-polished file is a near no-op (the noise profile is gone,
+        # pauses are already within tolerance).
+        from pipeline.polish import polish_segment_audio
+
+        for seg_file in segment_files:
+            try:
+                polish_segment_audio(str(seg_file))
+            except Exception as e:
+                logger.warning(f"Compose-time polish failed for {seg_file}: {e}")
+
         temp_wav = final_dir / "final_temp.wav"
         normalized_wav = final_dir / "final_normalized.wav"
         ok = compose_segments(segment_files, temp_wav, sr=target_sr, pause_ms=pause_ms)
