@@ -548,6 +548,76 @@ class TestJiwerContentVerifier:
             assert result.metrics["char_errors"] >= 3
 
 
+class TestTempoDriftVerifier:
+    def _write_bursts(self, path: Path, intervals_first: float, intervals_second: float):
+        """Write tone bursts: first half at one onset rate, second half at another."""
+        sr = 24000
+        pieces = []
+        for half_intervals in (intervals_first, intervals_second):
+            t = 0.0
+            while t < 3.0:
+                pieces.append(_tone_burst(sr, 0.08))
+                pieces.append(np.zeros(int(sr * max(half_intervals - 0.08, 0.02)), dtype=np.float32))
+                t += half_intervals
+        sf.write(str(path), np.concatenate(pieces), sr, subtype="pcm_16")
+
+    def test_stable_tempo_not_flagged(self):
+        from pipeline.quality_layers import TempoDriftVerifier
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "stable.wav"
+            self._write_bursts(path, 0.2, 0.2)
+            result = TempoDriftVerifier().verify(
+                audio_path=str(path),
+                original_text="x",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=6.0,
+            )
+            assert result.passed is True  # feedback-only, never fails
+            assert result.metrics["drift_ratio"] < 1.25
+            assert result.metrics["drift_flagged"] is False
+
+    def test_shifting_tempo_flagged_in_metrics(self):
+        from pipeline.quality_layers import TempoDriftVerifier
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "shift.wav"
+            self._write_bursts(path, 0.35, 0.12)  # second half ~3x faster
+            result = TempoDriftVerifier().verify(
+                audio_path=str(path),
+                original_text="x",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=6.0,
+            )
+            assert result.passed is True  # feedback-only
+            assert result.metrics["drift_ratio"] > 1.25
+            assert result.metrics["drift_flagged"] is True
+            assert result.metrics["rate_second_half"] > result.metrics["rate_first_half"]
+
+    def test_insufficient_onsets_reports_note(self):
+        from pipeline.quality_layers import TempoDriftVerifier
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "short.wav"
+            sf.write(str(path), _tone_burst(24000, 0.3), 24000, subtype="pcm_16")
+            result = TempoDriftVerifier().verify(
+                audio_path=str(path),
+                original_text="x",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=0.3,
+            )
+            assert result.passed is True
+            assert result.metrics.get("note") == "insufficient_onsets"
+
+
+def _tone_burst(sr: int, duration: float) -> np.ndarray:
+    t = np.arange(int(sr * duration), dtype=np.float32) / sr
+    return 0.5 * np.sin(2 * np.pi * 440 * t)
+
+
 class TestWhisperXContextSharing:
     def test_orchestrator_runs_whisperx_once_for_all_whisperx_layers(self, monkeypatch):
         from pipeline.quality_layers import JiwerContentVerifier, WhisperXAlignmentVerifier

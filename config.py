@@ -151,6 +151,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                         "min_errors": 3,
                     },
                 },
+                "tempo_drift": {
+                    "enabled": True,
+                    "hardfail": False,
+                    "thresholds": {
+                        # Calibrated on verified zh segments: stable narration
+                        # <=1.11, a known speed-shifting take scored 1.35.
+                        "max_drift_ratio": 1.25,
+                    },
+                },
                 "resemblyzer_speaker": {
                     "enabled": True,
                     "hardfail": False,

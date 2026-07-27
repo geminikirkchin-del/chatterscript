@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 import soundfile as sf
+import numpy as np
 
 from config import config_manager
 from pipeline.quality import LayerResult, QualityVerifier, VerificationContext
@@ -487,6 +488,94 @@ class JiwerContentVerifier(QualityVerifier):
 # ---------------------------------------------------------------------------
 # Ticket 03: Speaker + spectral feedback layers (feedback-only)
 # ---------------------------------------------------------------------------
+
+
+def _onset_times(audio: np.ndarray, sr: int) -> np.ndarray:
+    """
+    Detect syllable onsets as short-term energy peaks (pure numpy).
+
+    Chosen after measuring whisperx zh word timestamps: they are frame-quantized
+    and unreliable for rate computation, so tempo drift is estimated from the
+    audio directly. Returns onset times in seconds.
+    """
+    frame = max(1, int(sr * 0.02))
+    n = len(audio) // frame
+    if n < 3:
+        return np.array([])
+    frames = audio[: n * frame].astype(np.float64).reshape(n, frame)
+    db = 20 * np.log10(np.maximum(np.sqrt(np.mean(frames ** 2, axis=1)), 1e-10))
+    floor = np.percentile(db, 20)
+    thresh = max(floor + 8, -45)
+    min_sep = int(0.1 / 0.02)  # 100ms minimum separation
+    peaks: list[int] = []
+    for i in range(1, n - 1):
+        if db[i] > thresh and db[i] >= db[i - 1] and db[i] > db[i + 1]:
+            if not peaks or i - peaks[-1] >= min_sep:
+                peaks.append(i)
+    return np.array(peaks, dtype=float) * 0.02
+
+
+class TempoDriftVerifier(QualityVerifier):
+    """
+    Feedback-only tempo-stability verifier.
+
+    Compares onset (syllable) rate between the first and second half of the
+    speech-active region. Calibrated on verified segments: stable narration
+    scores <=1.11, a known speed-shifting take scored 1.35 — hence the 1.25
+    default threshold. Feedback-only until more data accrues.
+    """
+
+    @property
+    def name(self) -> str:
+        return "tempo_drift"
+
+    def _config(self) -> Dict[str, Any]:
+        return _layer_thresholds(self.name)
+
+    def verify(
+        self,
+        audio_path: str,
+        original_text: str,
+        reference_voice_path: Optional[str],
+        language: str,
+        expected_duration: float,
+        context: Optional[VerificationContext] = None,
+    ) -> LayerResult:
+        cfg = self._config()
+        max_drift = _get_threshold(cfg, "max_drift_ratio", self.name)
+
+        audio, sr = sf.read(audio_path, dtype="float32")
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+
+        peaks = _onset_times(audio, sr)
+        metrics: Dict[str, Any] = {
+            "onset_count": int(len(peaks)),
+            "max_drift_ratio": max_drift,
+        }
+        if len(peaks) < 6:
+            # Too short/sparse to judge — report but never flag.
+            metrics["note"] = "insufficient_onsets"
+            return LayerResult(passed=True, score=0.0, failure_reason=None, metrics=metrics)
+
+        t0, t1 = peaks[0], peaks[-1]
+        mid = (t0 + t1) / 2
+        rate_first = len([p for p in peaks if p < mid]) / max(mid - t0, 0.1)
+        rate_second = len([p for p in peaks if p >= mid]) / max(t1 - mid, 0.1)
+        drift = max(rate_first, rate_second) / max(min(rate_first, rate_second), 0.1)
+
+        metrics.update(
+            {
+                "drift_ratio": round(float(drift), 3),
+                "rate_first_half": round(float(rate_first), 2),
+                "rate_second_half": round(float(rate_second), 2),
+            }
+        )
+        flagged = max_drift is not None and drift > max_drift
+        metrics["drift_flagged"] = bool(flagged)
+        # Feedback-only: score reflects stability but never fails the segment.
+        score = max(0.0, min(1.0, 1.0 - (drift - 1.0)))
+        return LayerResult(passed=True, score=score, failure_reason=None, metrics=metrics)
 
 
 class ResemblyzerSpeakerVerifier(QualityVerifier):

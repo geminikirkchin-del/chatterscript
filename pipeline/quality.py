@@ -136,6 +136,12 @@ class PipelineQualityVerifier:
 
             layers.append(JiwerContentVerifier())
 
+        # Tempo drift layer (feedback-only, pure numpy onset analysis).
+        if layer_config.get("tempo_drift", {}).get("enabled", True):
+            from pipeline.quality_layers import TempoDriftVerifier
+
+            layers.append(TempoDriftVerifier())
+
         # Speaker + spectral feedback layers (feedback-only by default).
         if layer_config.get("resemblyzer_speaker", {}).get("enabled", True):
             from pipeline.quality_layers import ResemblyzerSpeakerVerifier
