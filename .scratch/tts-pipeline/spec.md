@@ -21,7 +21,7 @@ Introduce an asynchronous TTS pipeline (`/api/tts-pipeline`) that:
    - ASR back-verification via whisperx, comparing transcribed text against the input segment.
 4. Retries failed segments up to 3 times, then invokes a local AI agent to adjust generation parameters based on the failure type.
 5. Scores each segment and exposes per-segment status in the API and UI.
-6. Composes all passing segments into one final WAV/MP3 with 100–200ms natural pauses between segments using ffmpeg.
+6. Composes **all** segments into one final WAV/MP3 in sentence order with 100–200ms natural pauses between segments using ffmpeg — including failed segments via their best-effort take (see ADR-0001).
 7. Keeps intermediate segment files for human review and accepts feedback to improve future AI agent decisions.
 
 The pipeline must work entirely offline using local models and tools.
@@ -113,11 +113,11 @@ Failure metadata (type, metrics, retry count) is recorded on the segment.
   - Clipping → lower exaggeration.
   - Repeated ASR + audio failures → suggest switching reference voice if alternatives exist.
 - The agent records the parameter deltas and the outcome for the feedback loop.
-- If the agent-adjusted run also fails, the segment is marked `failed` and the pipeline continues; the final composition excludes failed segments but preserves them for review.
+- If the agent-adjusted run also fails, the segment is marked `failed` and the pipeline continues. The final composition **still includes the failed segment in its original position**, using its last polished attempt on disk (best-effort take) — every sentence carries meaning and a missing one breaks the narration's logic (see ADR-0001). The segment's failed status and verification logs stay visible for review and retry.
 
 ### Composition
 
-- Use ffmpeg concat demuxer to join passing segments.
+- Concatenate segments **in sentence order**; the final must contain every segment — verified takes for passed segments, best-effort takes for failed ones. Only a segment with no audio at all (generation or write failure) may be skipped.
 - Insert 100–200ms of silence between segments (configurable, default 150ms).
 - Output follows `config.audio_output.format` and `config.audio_output.sample_rate`.
 - Final file saved as `outputs/pipeline_jobs/{job_id}/final.{format}`.

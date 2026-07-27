@@ -1413,11 +1413,21 @@ Set the `CUDA_VISIBLE_DEVICES` environment variable **before** running `python s
 
 ### Pipeline Verification Environment (long-form TTS)
 
-The long-form pipeline (`/api/tts-pipeline`) verifies every segment with WhisperX
-alignment, jiwer content checks, Resemblyzer speaker similarity, and Librosa
-spectral analysis. These tools run in an **isolated venv** (`.verification_venv/`)
-so their dependencies (e.g. a different torch than the TTS engine) never conflict
-with the main runtime.
+The long-form pipeline (`/api/tts-pipeline`) splits a script into one-sentence
+segments, generates and verifies each (with retries + an AI agent adjusting
+parameters), then composes the final audio.
+
+**Final composition contract (ADR-0001):** the final always concatenates **all**
+segments in sentence order — passed segments ship verified audio, failed
+segments ship their best-effort (last polished) take. Every sentence carries
+meaning; a missing one breaks the narration's logic. Failed segments keep their
+FAILED status and logs for review, and can be regenerated via
+`POST /api/tts-pipeline/{job_id}/retry-failed`.
+
+Segment verification runs in an **isolated venv** (`.verification_venv/`) with
+WhisperX alignment, jiwer content checks, Resemblyzer speaker similarity, and
+Librosa spectral analysis — so their dependencies (e.g. a different torch than
+the TTS engine) never conflict with the main runtime.
 
 **Setup (CPU — slow but works everywhere):**
 ```bash
