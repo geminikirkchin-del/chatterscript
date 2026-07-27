@@ -596,6 +596,11 @@
                             </div>
                             <p class="form-hint mb-4">Job ID: <code id="pipeline-job-id" class="code"></code></p>
 
+                            <div class="flex-row items-center gap-2 mb-4">
+                                <input id="pipeline-load-job-input" type="text" class="form-input small" placeholder="Load existing job ID (e.g. pipe-xxxxxxxxxxxx)" style="max-width: 320px;" />
+                                <button id="pipeline-load-job-btn" type="button" class="btn secondary small">Load Job</button>
+                            </div>
+
                             <div id="pipeline-final-audio" class="hidden mb-6">
                                 <h4 class="form-label mb-2">Final Audio</h4>
                                 <audio id="pipeline-final-player" controls class="w-full mb-2"></audio>

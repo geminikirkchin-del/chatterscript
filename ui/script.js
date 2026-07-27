@@ -1625,6 +1625,8 @@ document.addEventListener('DOMContentLoaded', function () {
     const pipelineLogsPanel = document.getElementById('pipeline-logs-panel');
     const pipelineLogsContent = document.getElementById('pipeline-logs-content');
     const pipelineRetryFailedBtn = document.getElementById('pipeline-retry-failed-btn');
+    const pipelineLoadJobInput = document.getElementById('pipeline-load-job-input');
+    const pipelineLoadJobBtn = document.getElementById('pipeline-load-job-btn');
 
     const sliders = [
         { input: 'pipeline-temperature', display: 'pipeline-temperature-value' },
@@ -2152,6 +2154,27 @@ document.addEventListener('DOMContentLoaded', function () {
 
     if (pipelineRetryFailedBtn) {
         pipelineRetryFailedBtn.addEventListener('click', retryFailedSegments);
+    }
+
+    function loadExistingJob() {
+        const jobId = pipelineLoadJobInput ? pipelineLoadJobInput.value.trim() : '';
+        if (!jobId) {
+            showPipelineSubmitStatus('Enter a job ID first (e.g. pipe-xxxxxxxxxxxx).', 'error');
+            return;
+        }
+        currentPipelineJobId = jobId;
+        showPipelineDashboard();
+        startPipelinePolling();
+        showPipelineSubmitStatus(`Loaded job ${jobId}`, 'success');
+    }
+
+    if (pipelineLoadJobBtn) {
+        pipelineLoadJobBtn.addEventListener('click', loadExistingJob);
+    }
+    if (pipelineLoadJobInput) {
+        pipelineLoadJobInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') loadExistingJob();
+        });
     }
 
     // Load voice lists on startup
