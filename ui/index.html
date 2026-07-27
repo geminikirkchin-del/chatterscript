@@ -587,7 +587,12 @@
                         <div id="pipeline-dashboard" class="mt-8 hidden">
                             <div class="flex-row items-center justify-between mb-4">
                                 <h3 class="text-xl font-semibold">Job Dashboard</h3>
-                                <span id="pipeline-job-status" class="status-badge">pending</span>
+                                <div class="flex-row items-center gap-2">
+                                    <button id="pipeline-retry-failed-btn" type="button" class="btn secondary small hidden">
+                                        Retry Failed Segments
+                                    </button>
+                                    <span id="pipeline-job-status" class="status-badge">pending</span>
+                                </div>
                             </div>
                             <p class="form-hint mb-4">Job ID: <code id="pipeline-job-id" class="code"></code></p>
 

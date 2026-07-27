@@ -1624,6 +1624,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const pipelineFinalDownload = document.getElementById('pipeline-final-download');
     const pipelineLogsPanel = document.getElementById('pipeline-logs-panel');
     const pipelineLogsContent = document.getElementById('pipeline-logs-content');
+    const pipelineRetryFailedBtn = document.getElementById('pipeline-retry-failed-btn');
 
     const sliders = [
         { input: 'pipeline-temperature', display: 'pipeline-temperature-value' },
@@ -1782,6 +1783,7 @@ document.addEventListener('DOMContentLoaded', function () {
         if (pipelineDashboard) pipelineDashboard.classList.remove('hidden');
         if (pipelineFinalAudio) pipelineFinalAudio.classList.add('hidden');
         if (pipelineLogsPanel) pipelineLogsPanel.classList.add('hidden');
+        if (pipelineRetryFailedBtn) pipelineRetryFailedBtn.classList.add('hidden');
         if (pipelineJobId) pipelineJobId.textContent = currentPipelineJobId || '';
         updatePipelineJobStatus('pending');
     }
@@ -1801,7 +1803,7 @@ document.addEventListener('DOMContentLoaded', function () {
         return Number(value).toFixed(2);
     }
 
-    function renderSegments(segments) {
+    function renderSegments(segments, feedbackMap) {
         if (!pipelineSegmentsTbody) return;
         pipelineSegmentsTbody.innerHTML = '';
         if (!segments || !segments.length) return;
@@ -1870,6 +1872,21 @@ document.addEventListener('DOMContentLoaded', function () {
                 }
             }
 
+            const driftMetrics = lastLog?.quality?.layer_results?.tempo_drift?.metrics;
+            if (driftMetrics && driftMetrics.drift_ratio !== undefined && driftMetrics.drift_ratio !== null) {
+                const flag = driftMetrics.drift_flagged ? ' ⚠' : '';
+                scoreParts.push(`Drift: ${formatScore(driftMetrics.drift_ratio)}${flag}`);
+            }
+
+            const polish = lastLog?.polish;
+            if (polish && polish.noise_floor_before_db !== undefined && polish.noise_floor_before_db !== null) {
+                const pauses = (polish.pauses_compressed || []).length;
+                scoreParts.push(
+                    `Polish: ${formatScore(polish.noise_floor_before_db)}→${formatScore(polish.noise_floor_after_db)}dB` +
+                    (pauses ? `, ${pauses} pause(s)` : '')
+                );
+            }
+
             const scoreCell = document.createElement('td');
             scoreCell.textContent = scoreParts.join('\n') || '—';
             scoreCell.style.whiteSpace = 'pre-line';
@@ -1878,7 +1895,17 @@ document.addEventListener('DOMContentLoaded', function () {
             retriesCell.textContent = seg.retry_count ?? 0;
 
             const failureCell = document.createElement('td');
-            failureCell.textContent = seg.failure_reason || '—';
+            if (seg.failure_reason) {
+                failureCell.textContent = seg.failure_reason;
+                // ADR-0001: failed segments still ship in the final via their
+                // best-effort take — tell the user instead of hiding it.
+                const bestEffortNote = document.createElement('div');
+                bestEffortNote.className = 'text-xs text-muted';
+                bestEffortNote.textContent = 'included in final (best-effort)';
+                failureCell.appendChild(bestEffortNote);
+            } else {
+                failureCell.textContent = '—';
+            }
 
             const agentDecisionCell = document.createElement('td');
             const agentDecision = lastLog?.agent_decision;
@@ -1904,6 +1931,14 @@ document.addEventListener('DOMContentLoaded', function () {
 
             const feedbackCell = document.createElement('td');
             if (seg.status === 'passed' || seg.status === 'failed') {
+                const recorded = feedbackMap && feedbackMap[String(seg.index)];
+                if (recorded) {
+                    const badge = document.createElement('div');
+                    badge.className = 'text-sm';
+                    badge.textContent = recorded.rating === 'approve' ? '✓ approved' : '✗ rejected';
+                    if (recorded.comment) badge.title = recorded.comment;
+                    feedbackCell.appendChild(badge);
+                }
                 const commentInput = document.createElement('input');
                 commentInput.type = 'text';
                 commentInput.className = 'form-input small mb-1';
@@ -2010,6 +2045,8 @@ document.addEventListener('DOMContentLoaded', function () {
                 body: JSON.stringify({ segment_index: segmentIndex, rating, comment }),
             });
             showPipelineSubmitStatus(`Feedback recorded for segment ${segmentIndex + 1}`, 'success');
+            // Refresh so the recorded rating badge shows up immediately.
+            pollPipelineJob();
         } catch (error) {
             console.error('Feedback error:', error);
             showPipelineSubmitStatus(`Feedback failed: ${error.message}`, 'error');
@@ -2019,10 +2056,14 @@ document.addEventListener('DOMContentLoaded', function () {
     async function pollPipelineJob() {
         if (!currentPipelineJobId) return;
         try {
-            const job = await apiFetch(`/api/tts-pipeline/${currentPipelineJobId}`);
+            const [job, feedbackData] = await Promise.all([
+                apiFetch(`/api/tts-pipeline/${currentPipelineJobId}`),
+                apiFetch(`/api/tts-pipeline/${currentPipelineJobId}/feedback`).catch(() => ({ feedback: {} })),
+            ]);
             updatePipelineJobStatus(job.status);
-            renderSegments(job.segments);
+            renderSegments(job.segments, feedbackData.feedback || {});
             renderPipelineLogs(job);
+            updateRetryFailedButton(job);
             if (job.status === 'done' && job.final_audio_path) {
                 showFinalAudio(job.final_audio_path);
                 stopPipelinePolling();
@@ -2032,6 +2073,31 @@ document.addEventListener('DOMContentLoaded', function () {
         } catch (error) {
             console.error('Pipeline poll error:', error);
             stopPipelinePolling();
+        }
+    }
+
+    function updateRetryFailedButton(job) {
+        if (!pipelineRetryFailedBtn) return;
+        const failedCount = (job.segments || []).filter((s) => s.status === 'failed').length;
+        const canRetry = failedCount > 0 && (job.status === 'done' || job.status === 'failed');
+        pipelineRetryFailedBtn.classList.toggle('hidden', !canRetry);
+        if (canRetry) {
+            pipelineRetryFailedBtn.textContent = `Retry ${failedCount} Failed Segment(s)`;
+        }
+    }
+
+    async function retryFailedSegments() {
+        if (!currentPipelineJobId) return;
+        pipelineRetryFailedBtn.disabled = true;
+        try {
+            await apiFetch(`/api/tts-pipeline/${currentPipelineJobId}/retry-failed`, { method: 'POST' });
+            showPipelineSubmitStatus('Retrying failed segments...', 'info');
+            startPipelinePolling();
+        } catch (error) {
+            console.error('Retry-failed error:', error);
+            showPipelineSubmitStatus(`Retry failed: ${error.message}`, 'error');
+        } finally {
+            pipelineRetryFailedBtn.disabled = false;
         }
     }
 
@@ -2082,6 +2148,10 @@ document.addEventListener('DOMContentLoaded', function () {
 
     if (pipelineSubmitBtn) {
         pipelineSubmitBtn.addEventListener('click', submitPipelineJob);
+    }
+
+    if (pipelineRetryFailedBtn) {
+        pipelineRetryFailedBtn.addEventListener('click', retryFailedSegments);
     }
 
     // Load voice lists on startup

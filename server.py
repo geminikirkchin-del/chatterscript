@@ -1699,6 +1699,35 @@ async def submit_pipeline_feedback(job_id: str, request: PipelineFeedbackRequest
     return PipelineFeedbackResponse(message="Feedback recorded.")
 
 
+@app.get(
+    "/api/tts-pipeline/{job_id}/feedback",
+    tags=["TTS Pipeline"],
+    summary="Get recorded user feedback for a pipeline job",
+    responses={
+        404: {"model": ErrorResponse, "description": "Job not found."},
+    },
+)
+async def get_pipeline_feedback(job_id: str):
+    """
+    Return the latest user rating (approve/reject + comment) per segment for a
+    job, so the UI can show which segments already have feedback recorded.
+    """
+    job = pipeline_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline job '{job_id}' not found.")
+    latest: Dict[str, Dict[str, Any]] = {}
+    for fb in pipeline_service.feedback_store.read_recent(limit=10000):
+        if fb.job_id != job_id or fb.kind != "feedback":
+            continue
+        # Entries are chronological; later ones overwrite earlier ones.
+        latest[str(fb.segment_index)] = {
+            "rating": fb.rating,
+            "comment": fb.comment,
+            "timestamp": fb.timestamp,
+        }
+    return {"feedback": latest}
+
+
 MAX_SRT_FILE_BYTES = 5 * 1024 * 1024  # 5 MB is far larger than any legitimate SRT file
 MAX_SRT_ENTRIES = 2000  # Safety cap on subtitles processed per request
 MAX_FIT_TO_SLOT_STRETCH = 2.0  # Cap for per-subtitle speed-up when fit_to_slot is enabled
