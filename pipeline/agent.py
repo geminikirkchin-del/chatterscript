@@ -14,12 +14,33 @@ DEFAULT_CFG_WEIGHT_DELTA = 0.1
 DEFAULT_EXAGGERATION_DELTA = -0.1
 DEFAULT_SEED_DELTA = 1
 
-# Quality thresholds for the feedback-only speaker / spectral layers.
-DEFAULT_SPEAKER_SIMILARITY_THRESHOLD = 0.75
-DEFAULT_SPECTRAL_CONTRAST_THRESHOLD = 0.80
-DEFAULT_MFCC_MSE_THRESHOLD = 0.05
-
 GENERATION_FAILURE_REASON = "generation returned no audio"
+
+
+def _feedback_thresholds() -> Dict[str, float]:
+    """
+    Read speaker/spectral thresholds from config (single source of truth).
+
+    Falls back to the calibrated values from the 46-script verification run
+    (116 zh segments) if config keys are missing.
+    """
+    try:
+        from config import config_manager
+
+        layers = config_manager.get("pipeline.verification.layers", {})
+        speaker = layers.get("resemblyzer_speaker", {}).get("thresholds", {})
+        spectral = layers.get("librosa_spectral", {}).get("thresholds", {})
+        return {
+            "min_similarity": float(speaker.get("min_similarity", 0.84)),
+            "min_spectral_contrast": float(spectral.get("min_spectral_contrast", 0.87)),
+            "max_mfcc_mse": float(spectral.get("max_mfcc_mse", 3100.0)),
+        }
+    except Exception:
+        return {
+            "min_similarity": 0.84,
+            "min_spectral_contrast": 0.87,
+            "max_mfcc_mse": 3100.0,
+        }
 
 # Failure reasons produced by the content/ASR quality layers (whisperx alignment,
 # jiwer content, legacy ASR). The agent treats these as content failures and
@@ -166,24 +187,25 @@ class ParameterAgent:
 
         # Decide which signal to act on: prefer the latest segment, fall back to
         # the historical average when we have enough samples.
+        thresholds = _feedback_thresholds()
         similarity_low = False
         contrast_low = False
         mfcc_mse_high = False
 
         if isinstance(latest_similarity, (int, float)):
-            similarity_low = float(latest_similarity) < DEFAULT_SPEAKER_SIMILARITY_THRESHOLD
+            similarity_low = float(latest_similarity) < thresholds["min_similarity"]
         elif count >= 2 and avg_similarity > 0:
-            similarity_low = avg_similarity < DEFAULT_SPEAKER_SIMILARITY_THRESHOLD
+            similarity_low = avg_similarity < thresholds["min_similarity"]
 
         if isinstance(latest_contrast, (int, float)):
-            contrast_low = float(latest_contrast) < DEFAULT_SPECTRAL_CONTRAST_THRESHOLD
+            contrast_low = float(latest_contrast) < thresholds["min_spectral_contrast"]
         elif count >= 2 and avg_contrast > 0:
-            contrast_low = avg_contrast < DEFAULT_SPECTRAL_CONTRAST_THRESHOLD
+            contrast_low = avg_contrast < thresholds["min_spectral_contrast"]
 
         if isinstance(latest_mfcc_mse, (int, float)):
-            mfcc_mse_high = float(latest_mfcc_mse) > DEFAULT_MFCC_MSE_THRESHOLD
+            mfcc_mse_high = float(latest_mfcc_mse) > thresholds["max_mfcc_mse"]
         elif count >= 2 and avg_mfcc_mse > 0:
-            mfcc_mse_high = avg_mfcc_mse > DEFAULT_MFCC_MSE_THRESHOLD
+            mfcc_mse_high = avg_mfcc_mse > thresholds["max_mfcc_mse"]
 
         if similarity_low:
             old_temp = params.get("temperature", 0.8)

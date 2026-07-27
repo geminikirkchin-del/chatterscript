@@ -155,15 +155,20 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                     "enabled": True,
                     "hardfail": False,
                     "thresholds": {
-                        "min_similarity": 0.75,
+                        # Calibrated from 116 verified zh segments (46-script run):
+                        # p50=0.909, p5=0.841, min=0.770. 0.84 flags the worst ~5%.
+                        "min_similarity": 0.84,
                     },
                 },
                 "librosa_spectral": {
                     "enabled": True,
                     "hardfail": False,
                     "thresholds": {
-                        "max_mfcc_mse": 0.05,
-                        "min_spectral_contrast": 0.80,
+                        # Calibrated from the same run: mfcc_mse p50=1850, p95=3164;
+                        # spectral_contrast p50=0.882, p5=0.873. Thresholds sit at
+                        # the outlier edge, not guessed values.
+                        "max_mfcc_mse": 3100.0,
+                        "min_spectral_contrast": 0.87,
                     },
                 },
             },
