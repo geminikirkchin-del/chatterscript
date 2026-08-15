@@ -1,0 +1,27 @@
+Segment 3: retries=2, status=passed
+  attempt 0: passed=False, reason=N/A
+    ending_artifact: passed=False, reason=trailing_audio_too_long
+    metrics: last_word_ratio=0.1, trailing_audio_sec=7.852, trailing_tail_rms_db=-33.44
+  attempt 1: passed=True, reason=N/A
+    ending_artifact: passed=True, reason=None
+    metrics: last_word_ratio=0.1, trailing_audio_sec=0.324, trailing_tail_rms_db=-34.07
+Segment 4: retries=4, status=passed
+  attempt 0: passed=False, reason=N/A
+    ending_artifact: passed=False, reason=trailing_audio_too_long
+    metrics: last_word_ratio=0.11, trailing_audio_sec=0.619, trailing_tail_rms_db=-30.51
+  attempt 1: passed=False, reason=N/A
+    ending_artifact: passed=False, reason=trailing_audio_too_long
+    metrics: last_word_ratio=0.11, trailing_audio_sec=0.625, trailing_tail_rms_db=-30.92
+  attempt 2: passed=False, reason=N/A
+    ending_artifact: passed=False, reason=trailing_audio_too_long
+    metrics: last_word_ratio=0.1, trailing_audio_sec=0.658, trailing_tail_rms_db=-31.17
+  attempt 3: passed=True, reason=N/A
+    ending_artifact: passed=True, reason=None
+    metrics: last_word_ratio=0.124, trailing_audio_sec=0.44, trailing_tail_rms_db=-30.88
+Segment 6: retries=2, status=generating
+  attempt 0: passed=False, reason=N/A
+    ending_artifact: passed=True, reason=None
+    metrics: last_word_ratio=0.1, trailing_audio_sec=0.428, trailing_tail_rms_db=-38.07
+  attempt 1: passed=False, reason=N/A
+    ending_artifact: passed=False, reason=trailing_audio_too_long
+    metrics: last_word_ratio=0.1, trailing_audio_sec=0.61, trailing_tail_rms_db=-35.67

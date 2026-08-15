@@ -121,7 +121,19 @@ class UpdateStatusResponse(BaseModel):
 class PipelineSubmitRequest(BaseModel):
     """Request model for submitting a long-form TTS pipeline job."""
 
-    text: str = Field(..., min_length=1, description="Long text to synthesize.")
+    text: Optional[str] = Field(
+        None,
+        min_length=1,
+        description="Long text to synthesize. Required unless script_filename is provided.",
+    )
+    script_filename: Optional[str] = Field(
+        None,
+        description="Filename of a .md script under the input/ folder. If provided, its contents are used as the text.",
+    )
+    job_name: Optional[str] = Field(
+        None,
+        description="Optional human-readable name for the job and final audio file.",
+    )
     voice_mode: Literal["predefined", "clone"] = Field(
         "predefined",
         description="Voice mode: 'predefined' or 'clone'.",
@@ -166,8 +178,12 @@ class PipelineJobResponse(BaseModel):
     text: str
     segments: List[Dict[str, Any]]
     final_audio_path: Optional[str]
+    srt_path: Optional[str] = None
     created_at: Optional[float]
     updated_at: Optional[float]
+    job_name: Optional[str] = None
+    total_generation_time_sec: Optional[float] = None
+    total_verification_time_sec: Optional[float] = None
 
 
 class PipelineJobSummaryResponse(BaseModel):
@@ -179,6 +195,7 @@ class PipelineJobSummaryResponse(BaseModel):
     final_audio_path: Optional[str]
     created_at: Optional[float]
     updated_at: Optional[float]
+    job_name: Optional[str] = None
 
 
 class PipelineJobListResponse(BaseModel):
@@ -192,6 +209,12 @@ class PipelineSubmitResponse(BaseModel):
 
     job_id: str
     status: str
+
+
+class PipelineScriptListResponse(BaseModel):
+    """Response model listing available .md scripts in the input folder."""
+
+    scripts: List[str]
 
 
 class PipelineFeedbackRequest(BaseModel):

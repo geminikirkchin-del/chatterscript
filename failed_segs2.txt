@@ -1,0 +1,42 @@
+FAILED Segment 6: text=要理解互联网对话，我们必须先认识七层模型，也就是OSI模型。...
+  segment failure_reason: trailing_audio_too_long
+  retries: 5
+  attempt 0: passed=False, reason=cer_too_high
+    jiwer_content: reason=cer_too_high
+  attempt 1: passed=False, reason=cer_too_high
+    jiwer_content: reason=cer_too_high
+    ending_artifact: reason=trailing_audio_too_long
+  attempt 2: passed=False, reason=cer_too_high
+    jiwer_content: reason=cer_too_high
+    ending_artifact: reason=trailing_audio_too_long
+  attempt 3: passed=False, reason=cer_too_high
+    jiwer_content: reason=cer_too_high
+  attempt 4: passed=False, reason=trailing_audio_too_long
+    ending_artifact: reason=trailing_audio_too_long
+FAILED Segment 12: text=HTTP、HTTPS、SMTP、FTP和DNS这些常见协议都...
+  segment failure_reason: duration_deviation
+  retries: 5
+  attempt 0: passed=False, reason=duration_deviation
+    basic_audio: reason=duration_deviation
+    whisperx_alignment: reason=text_coverage_low
+    jiwer_content: reason=wer_too_high
+    ending_artifact: reason=trailing_audio_too_long
+  attempt 1: passed=False, reason=duration_deviation
+    basic_audio: reason=duration_deviation
+    whisperx_alignment: reason=text_coverage_low
+    jiwer_content: reason=wer_too_high
+    ending_artifact: reason=trailing_audio_too_long
+  attempt 2: passed=False, reason=duration_deviation
+    basic_audio: reason=duration_deviation
+    whisperx_alignment: reason=text_coverage_low
+    jiwer_content: reason=wer_too_high
+    ending_artifact: reason=trailing_audio_too_long
+  attempt 3: passed=False, reason=duration_deviation
+    basic_audio: reason=duration_deviation
+    whisperx_alignment: reason=text_coverage_low
+    jiwer_content: reason=wer_too_high
+    ending_artifact: reason=trailing_audio_too_long
+  attempt 4: passed=False, reason=duration_deviation
+    basic_audio: reason=duration_deviation
+    whisperx_alignment: reason=text_coverage_low
+    jiwer_content: reason=wer_too_high

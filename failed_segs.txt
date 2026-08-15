@@ -1,0 +1,34 @@
+FAILED Segment 6: text=要理解互联网对话，我们必须先认识七层模型，也就是OSI模型。...
+  retries: 5
+  attempt 0: reason=N/A
+    ending: passed=True, reason=None
+    metrics: lwr=0.1, trail=0.428, tail_db=-38.07
+  attempt 1: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.1, trail=0.61, tail_db=-35.67
+  attempt 2: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.11, trail=1.138, tail_db=-42.51
+  attempt 3: reason=N/A
+    ending: passed=True, reason=None
+    metrics: lwr=0.11, trail=0.379, tail_db=-34.23
+  attempt 4: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.11, trail=0.581, tail_db=-36.26
+FAILED Segment 12: text=HTTP、HTTPS、SMTP、FTP和DNS这些常见协议都...
+  retries: 5
+  attempt 0: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.1, trail=1.943, tail_db=-28.99
+  attempt 1: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.083, trail=5.349, tail_db=-23.35
+  attempt 2: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.111, trail=4.397, tail_db=-27.5
+  attempt 3: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.077, trail=0.548, tail_db=-29.49
+  attempt 4: reason=N/A
+    ending: passed=True, reason=None
+    metrics: lwr=0.1, trail=0.435, tail_db=-28.0

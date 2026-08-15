@@ -1622,11 +1622,14 @@ document.addEventListener('DOMContentLoaded', function () {
     const pipelineFinalAudio = document.getElementById('pipeline-final-audio');
     const pipelineFinalPlayer = document.getElementById('pipeline-final-player');
     const pipelineFinalDownload = document.getElementById('pipeline-final-download');
+    const pipelineSrtDownload = document.getElementById('pipeline-srt-download');
     const pipelineLogsPanel = document.getElementById('pipeline-logs-panel');
     const pipelineLogsContent = document.getElementById('pipeline-logs-content');
     const pipelineRetryFailedBtn = document.getElementById('pipeline-retry-failed-btn');
     const pipelineLoadJobInput = document.getElementById('pipeline-load-job-input');
     const pipelineLoadJobBtn = document.getElementById('pipeline-load-job-btn');
+    const pipelineScriptSelect = document.getElementById('pipeline-script-select');
+    const pipelineJobNameInput = document.getElementById('pipeline-job-name');
 
     const sliders = [
         { input: 'pipeline-temperature', display: 'pipeline-temperature-value' },
@@ -1636,6 +1639,7 @@ document.addEventListener('DOMContentLoaded', function () {
     ];
 
     let currentPipelineJobId = null;
+    let currentPipelineJobName = null;
     let pipelinePollTimer = null;
     let predefinedVoices = [];
     let referenceFiles = [];
@@ -1677,6 +1681,49 @@ document.addEventListener('DOMContentLoaded', function () {
         } catch (error) {
             console.error('Failed to load pipeline initial data:', error);
             showPipelineSubmitStatus('Failed to load voice lists. Is the server running?', 'error');
+        }
+    }
+
+    async function loadPipelineScripts() {
+        if (!pipelineScriptSelect) return;
+        try {
+            const data = await apiFetch('/api/pipeline/scripts');
+            const scripts = data.scripts || [];
+            pipelineScriptSelect.innerHTML = '<option value="">Paste text manually</option>';
+            scripts.forEach((name) => {
+                const opt = document.createElement('option');
+                opt.value = name;
+                opt.textContent = name;
+                pipelineScriptSelect.appendChild(opt);
+            });
+        } catch (error) {
+            console.error('Failed to load pipeline scripts:', error);
+        }
+    }
+
+    function slugifyJobName(name) {
+        return name.replace(/[^\w\-]+/g, '_').replace(/^_+|_+$/g, '');
+    }
+
+    function updatePipelineTextFromScript() {
+        if (!pipelineScriptSelect || !pipelineText) return;
+        const filename = pipelineScriptSelect.value;
+        if (filename) {
+            pipelineText.disabled = true;
+            pipelineText.required = false;
+            pipelineText.placeholder = `Using script: ${filename}`;
+            pipelineText.value = '';
+            if (pipelineJobNameInput) {
+                pipelineJobNameInput.value = filename.replace(/\.md$/i, '');
+                pipelineJobNameInput.disabled = true;
+            }
+        } else {
+            pipelineText.disabled = false;
+            pipelineText.required = true;
+            pipelineText.placeholder = 'Paste your long script here...';
+            if (pipelineJobNameInput) {
+                pipelineJobNameInput.disabled = false;
+            }
         }
     }
 
@@ -1726,10 +1773,20 @@ document.addEventListener('DOMContentLoaded', function () {
     function getPipelineFormData() {
         const selectedMode = document.querySelector('input[name="pipeline_voice_mode"]:checked');
         const voiceMode = selectedMode ? selectedMode.value : 'predefined';
+        const scriptFilename = pipelineScriptSelect ? pipelineScriptSelect.value : '';
         const payload = {
-            text: pipelineText ? pipelineText.value : '',
             voice_mode: voiceMode,
         };
+        if (scriptFilename) {
+            payload.script_filename = scriptFilename;
+            payload.job_name = pipelineJobNameInput ? pipelineJobNameInput.value.trim() : '';
+        } else {
+            payload.text = pipelineText ? pipelineText.value : '';
+            if (pipelineJobNameInput) {
+                const name = pipelineJobNameInput.value.trim();
+                if (name) payload.job_name = name;
+            }
+        }
         if (voiceMode === 'predefined' && pipelinePredefinedSelect) {
             payload.predefined_voice_id = pipelinePredefinedSelect.value;
         } else if (voiceMode === 'clone' && pipelineCloneSelect) {
@@ -1754,8 +1811,9 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     async function submitPipelineJob() {
-        if (!pipelineText || !pipelineText.value.trim()) {
-            showPipelineSubmitStatus('Please paste a script first.', 'error');
+        const scriptFilename = pipelineScriptSelect ? pipelineScriptSelect.value : '';
+        if (!scriptFilename && (!pipelineText || !pipelineText.value.trim())) {
+            showPipelineSubmitStatus('Please paste a script or select a script file.', 'error');
             return;
         }
         hidePipelineSubmitStatus();
@@ -1769,6 +1827,10 @@ document.addEventListener('DOMContentLoaded', function () {
                 body: JSON.stringify(payload),
             });
             currentPipelineJobId = result.job_id;
+            currentPipelineJobName = pipelineJobNameInput ? pipelineJobNameInput.value.trim() : '';
+            if (!currentPipelineJobName && scriptFilename) {
+                currentPipelineJobName = scriptFilename.replace(/\.md$/i, '');
+            }
             showPipelineSubmitStatus(`Job submitted: ${result.job_id}`, 'success');
             showPipelineDashboard();
             startPipelinePolling();
@@ -1784,10 +1846,18 @@ document.addEventListener('DOMContentLoaded', function () {
     function showPipelineDashboard() {
         if (pipelineDashboard) pipelineDashboard.classList.remove('hidden');
         if (pipelineFinalAudio) pipelineFinalAudio.classList.add('hidden');
-        if (pipelineLogsPanel) pipelineLogsPanel.classList.add('hidden');
         if (pipelineRetryFailedBtn) pipelineRetryFailedBtn.classList.add('hidden');
-        if (pipelineJobId) pipelineJobId.textContent = currentPipelineJobId || '';
+        updatePipelineJobIdDisplay();
         updatePipelineJobStatus('pending');
+    }
+
+    function updatePipelineJobIdDisplay() {
+        if (!pipelineJobId) return;
+        let label = currentPipelineJobId || '';
+        if (currentPipelineJobName) {
+            label = `${label} (${currentPipelineJobName})`;
+        }
+        pipelineJobId.textContent = label;
     }
 
     function updatePipelineJobStatus(status) {
@@ -1807,111 +1877,161 @@ document.addEventListener('DOMContentLoaded', function () {
 
     function renderSegments(segments, feedbackMap) {
         if (!pipelineSegmentsTbody) return;
-        pipelineSegmentsTbody.innerHTML = '';
-        if (!segments || !segments.length) return;
+        if (!segments || !segments.length) {
+            pipelineSegmentsTbody.innerHTML = '';
+            return;
+        }
 
+        const seen = new Set();
         segments.forEach((seg) => {
-            const tr = document.createElement('tr');
-            tr.dataset.index = seg.index;
+            const indexKey = String(seg.index);
+            seen.add(indexKey);
+            const tr = getOrCreateSegmentRow(seg.index);
+            updateSegmentRow(tr, seg, feedbackMap);
+        });
 
-            const statusCell = document.createElement('td');
-            const statusBadge = document.createElement('span');
-            statusBadge.className = `status-badge status-badge--${seg.status}`;
-            statusBadge.textContent = seg.status;
-            statusCell.appendChild(statusBadge);
-
-            const audioCell = document.createElement('td');
-            if (seg.audio_path && seg.status !== 'pending' && seg.status !== 'generating') {
-                const audio = document.createElement('audio');
-                audio.controls = true;
-                audio.src = `${API_BASE_URL}/api/tts-pipeline/${currentPipelineJobId}/segments/${seg.index}/audio`;
-                audio.className = 'pipeline-audio';
-                audioCell.appendChild(audio);
-            } else {
-                audioCell.textContent = '—';
+        // Remove rows for segments that no longer exist.
+        pipelineSegmentsTbody.querySelectorAll('tr').forEach((tr) => {
+            if (!seen.has(tr.dataset.index)) {
+                tr.remove();
             }
+        });
+    }
 
-            const scoreParts = [];
-            if (seg.score !== null && seg.score !== undefined) scoreParts.push(`overall: ${formatScore(seg.score)}`);
-            if (seg.audio_score !== null && seg.audio_score !== undefined) scoreParts.push(`audio: ${formatScore(seg.audio_score)}`);
-            if (seg.asr_score !== null && seg.asr_score !== undefined) scoreParts.push(`asr: ${formatScore(seg.asr_score)}`);
-
-            // Audio metrics from the latest verification log entry.
-            const lastLog = seg.verification_log && seg.verification_log.length
-                ? seg.verification_log[seg.verification_log.length - 1]
-                : null;
-            const audioMetrics = lastLog?.quality?.layer_results?.audio_metrics?.metrics;
-            if (audioMetrics) {
-                if (audioMetrics.lufs !== undefined) scoreParts.push(`LUFS: ${formatScore(audioMetrics.lufs)}`);
-                if (audioMetrics.true_peak_dbtp !== undefined) scoreParts.push(`TP: ${formatScore(audioMetrics.true_peak_dbtp)} dBTP`);
-                if (audioMetrics.dynamic_range_db !== undefined) scoreParts.push(`DR: ${formatScore(audioMetrics.dynamic_range_db)} dB`);
+    function getOrCreateSegmentRow(index) {
+        let tr = pipelineSegmentsTbody.querySelector(`tr[data-index="${index}"]`);
+        if (!tr) {
+            tr = document.createElement('tr');
+            tr.dataset.index = index;
+            for (let i = 0; i < 9; i++) {
+                tr.appendChild(document.createElement('td'));
             }
+            pipelineSegmentsTbody.appendChild(tr);
+        }
+        return tr;
+    }
 
-            const whisperxMetrics = lastLog?.quality?.layer_results?.whisperx_alignment?.metrics;
-            if (whisperxMetrics) {
-                if (whisperxMetrics.mean_word_confidence !== undefined) scoreParts.push(`WX conf: ${formatScore(whisperxMetrics.mean_word_confidence)}`);
-                if (whisperxMetrics.text_coverage_ratio !== undefined) scoreParts.push(`WX cov: ${formatScore(whisperxMetrics.text_coverage_ratio)}`);
+    function updateSegmentRow(tr, seg, feedbackMap) {
+        const cells = tr.children;
+        cells[0].textContent = seg.index + 1;
+
+        // Status cell
+        let statusBadge = cells[1].querySelector('.status-badge');
+        if (!statusBadge) {
+            statusBadge = document.createElement('span');
+            cells[1].appendChild(statusBadge);
+        }
+        statusBadge.className = `status-badge status-badge--${seg.status}`;
+        statusBadge.textContent = seg.status;
+
+        // Audio cell — keep the existing player if the URL hasn't changed so
+        // playback isn't interrupted by dashboard polling refreshes.
+        const audioUrl = seg.audio_path && seg.status !== 'pending' && seg.status !== 'generating'
+            ? `${API_BASE_URL}/api/tts-pipeline/${currentPipelineJobId}/segments/${seg.index}/audio`
+            : null;
+        const existingAudio = cells[2].querySelector('audio');
+        if (!audioUrl) {
+            cells[2].innerHTML = '';
+            cells[2].textContent = '—';
+        } else if (!existingAudio || existingAudio.src !== audioUrl) {
+            cells[2].innerHTML = '';
+            const audio = document.createElement('audio');
+            audio.controls = true;
+            audio.src = audioUrl;
+            audio.className = 'pipeline-audio';
+            cells[2].appendChild(audio);
+        }
+
+        // Scores cell
+        const scoreParts = [];
+        if (seg.score !== null && seg.score !== undefined) scoreParts.push(`overall: ${formatScore(seg.score)}`);
+        if (seg.audio_score !== null && seg.audio_score !== undefined) scoreParts.push(`audio: ${formatScore(seg.audio_score)}`);
+        if (seg.asr_score !== null && seg.asr_score !== undefined) scoreParts.push(`asr: ${formatScore(seg.asr_score)}`);
+        if (seg.generation_time_sec !== null && seg.generation_time_sec !== undefined) scoreParts.push(`Gen: ${formatScore(seg.generation_time_sec)}s`);
+        if (seg.verification_time_sec !== null && seg.verification_time_sec !== undefined) scoreParts.push(`Verify: ${formatScore(seg.verification_time_sec)}s`);
+
+        const lastLog = seg.verification_log && seg.verification_log.length
+            ? seg.verification_log[seg.verification_log.length - 1]
+            : null;
+        const audioMetrics = lastLog?.quality?.layer_results?.audio_metrics?.metrics;
+        if (audioMetrics) {
+            if (audioMetrics.lufs !== undefined) scoreParts.push(`LUFS: ${formatScore(audioMetrics.lufs)}`);
+            if (audioMetrics.true_peak_dbtp !== undefined) scoreParts.push(`TP: ${formatScore(audioMetrics.true_peak_dbtp)} dBTP`);
+            if (audioMetrics.dynamic_range_db !== undefined) scoreParts.push(`DR: ${formatScore(audioMetrics.dynamic_range_db)} dB`);
+        }
+
+        const whisperxMetrics = lastLog?.quality?.layer_results?.whisperx_alignment?.metrics;
+        if (whisperxMetrics) {
+            if (whisperxMetrics.mean_word_confidence !== undefined) scoreParts.push(`WX conf: ${formatScore(whisperxMetrics.mean_word_confidence)}`);
+            if (whisperxMetrics.text_coverage_ratio !== undefined) scoreParts.push(`WX cov: ${formatScore(whisperxMetrics.text_coverage_ratio)}`);
+        }
+
+        const jiwerMetrics = lastLog?.quality?.layer_results?.jiwer_content?.metrics;
+        if (jiwerMetrics) {
+            if (jiwerMetrics.wer !== undefined) scoreParts.push(`WER: ${formatScore(jiwerMetrics.wer)}`);
+            if (jiwerMetrics.cer !== undefined) scoreParts.push(`CER: ${formatScore(jiwerMetrics.cer)}`);
+        }
+
+        const speakerMetrics = lastLog?.quality?.layer_results?.resemblyzer_speaker?.metrics;
+        if (speakerMetrics && speakerMetrics.cosine_similarity !== undefined && speakerMetrics.cosine_similarity !== null) {
+            scoreParts.push(`Spk: ${formatScore(speakerMetrics.cosine_similarity)}`);
+        }
+
+        const spectralMetrics = lastLog?.quality?.layer_results?.librosa_spectral?.metrics;
+        if (spectralMetrics) {
+            if (spectralMetrics.mfcc_mse !== undefined && spectralMetrics.mfcc_mse !== null) {
+                scoreParts.push(`MFCC: ${formatScore(spectralMetrics.mfcc_mse)}`);
             }
-
-            const jiwerMetrics = lastLog?.quality?.layer_results?.jiwer_content?.metrics;
-            if (jiwerMetrics) {
-                if (jiwerMetrics.wer !== undefined) scoreParts.push(`WER: ${formatScore(jiwerMetrics.wer)}`);
-                if (jiwerMetrics.cer !== undefined) scoreParts.push(`CER: ${formatScore(jiwerMetrics.cer)}`);
+            if (spectralMetrics.spectral_contrast_ratio !== undefined && spectralMetrics.spectral_contrast_ratio !== null) {
+                scoreParts.push(`SC: ${formatScore(spectralMetrics.spectral_contrast_ratio)}`);
             }
+        }
 
-            const speakerMetrics = lastLog?.quality?.layer_results?.resemblyzer_speaker?.metrics;
-            if (speakerMetrics && speakerMetrics.cosine_similarity !== undefined && speakerMetrics.cosine_similarity !== null) {
-                scoreParts.push(`Spk: ${formatScore(speakerMetrics.cosine_similarity)}`);
-            }
+        const driftMetrics = lastLog?.quality?.layer_results?.tempo_drift?.metrics;
+        if (driftMetrics && driftMetrics.drift_ratio !== undefined && driftMetrics.drift_ratio !== null) {
+            const flag = driftMetrics.drift_flagged ? ' ⚠' : '';
+            scoreParts.push(`Drift: ${formatScore(driftMetrics.drift_ratio)}${flag}`);
+        }
 
-            const spectralMetrics = lastLog?.quality?.layer_results?.librosa_spectral?.metrics;
-            if (spectralMetrics) {
-                if (spectralMetrics.mfcc_mse !== undefined && spectralMetrics.mfcc_mse !== null) {
-                    scoreParts.push(`MFCC: ${formatScore(spectralMetrics.mfcc_mse)}`);
-                }
-                if (spectralMetrics.spectral_contrast_ratio !== undefined && spectralMetrics.spectral_contrast_ratio !== null) {
-                    scoreParts.push(`SC: ${formatScore(spectralMetrics.spectral_contrast_ratio)}`);
-                }
-            }
+        const polish = lastLog?.polish;
+        if (polish && polish.noise_floor_before_db !== undefined && polish.noise_floor_before_db !== null) {
+            const pauses = (polish.pauses_compressed || []).length;
+            scoreParts.push(
+                `Polish: ${formatScore(polish.noise_floor_before_db)}→${formatScore(polish.noise_floor_after_db)}dB` +
+                (pauses ? `, ${pauses} pause(s)` : '')
+            );
+        }
 
-            const driftMetrics = lastLog?.quality?.layer_results?.tempo_drift?.metrics;
-            if (driftMetrics && driftMetrics.drift_ratio !== undefined && driftMetrics.drift_ratio !== null) {
-                const flag = driftMetrics.drift_flagged ? ' ⚠' : '';
-                scoreParts.push(`Drift: ${formatScore(driftMetrics.drift_ratio)}${flag}`);
-            }
+        cells[3].textContent = scoreParts.join('\n') || '—';
+        cells[3].style.whiteSpace = 'pre-line';
 
-            const polish = lastLog?.polish;
-            if (polish && polish.noise_floor_before_db !== undefined && polish.noise_floor_before_db !== null) {
-                const pauses = (polish.pauses_compressed || []).length;
-                scoreParts.push(
-                    `Polish: ${formatScore(polish.noise_floor_before_db)}→${formatScore(polish.noise_floor_after_db)}dB` +
-                    (pauses ? `, ${pauses} pause(s)` : '')
-                );
-            }
+        // Retries cell
+        cells[4].textContent = seg.retry_count ?? 0;
 
-            const scoreCell = document.createElement('td');
-            scoreCell.textContent = scoreParts.join('\n') || '—';
-            scoreCell.style.whiteSpace = 'pre-line';
-
-            const retriesCell = document.createElement('td');
-            retriesCell.textContent = seg.retry_count ?? 0;
-
-            const failureCell = document.createElement('td');
-            if (seg.failure_reason) {
-                failureCell.textContent = seg.failure_reason;
-                // ADR-0001: failed segments still ship in the final via their
-                // best-effort take — tell the user instead of hiding it.
+        // Failure cell
+        if (seg.failure_reason) {
+            if (cells[5].dataset.reason !== seg.failure_reason) {
+                cells[5].innerHTML = '';
+                cells[5].textContent = seg.failure_reason;
                 const bestEffortNote = document.createElement('div');
                 bestEffortNote.className = 'text-xs text-muted';
                 bestEffortNote.textContent = 'included in final (best-effort)';
-                failureCell.appendChild(bestEffortNote);
-            } else {
-                failureCell.textContent = '—';
+                cells[5].appendChild(bestEffortNote);
+                cells[5].dataset.reason = seg.failure_reason;
             }
+        } else {
+            if (cells[5].dataset.reason !== '') {
+                cells[5].innerHTML = '';
+                cells[5].textContent = '—';
+                cells[5].dataset.reason = '';
+            }
+        }
 
-            const agentDecisionCell = document.createElement('td');
-            const agentDecision = lastLog?.agent_decision;
-            if (agentDecision) {
+        // Agent decision cell
+        const agentDecision = lastLog?.agent_decision;
+        if (agentDecision) {
+            if (cells[6].dataset.reason !== agentDecision.reason) {
+                cells[6].innerHTML = '';
                 const decisionSummary = document.createElement('div');
                 decisionSummary.className = 'text-sm';
                 const reasonDiv = document.createElement('div');
@@ -1926,77 +2046,84 @@ document.addEventListener('DOMContentLoaded', function () {
                         .join(', ');
                     decisionSummary.appendChild(deltasDiv);
                 }
-                agentDecisionCell.appendChild(decisionSummary);
-            } else {
-                agentDecisionCell.textContent = '—';
+                cells[6].appendChild(decisionSummary);
+                cells[6].dataset.reason = agentDecision.reason || '';
             }
-
-            const feedbackCell = document.createElement('td');
-            if (seg.status === 'passed' || seg.status === 'failed') {
-                const recorded = feedbackMap && feedbackMap[String(seg.index)];
-                if (recorded) {
-                    const badge = document.createElement('div');
-                    badge.className = 'text-sm';
-                    badge.textContent = recorded.rating === 'approve' ? '✓ approved' : '✗ rejected';
-                    if (recorded.comment) badge.title = recorded.comment;
-                    feedbackCell.appendChild(badge);
-                }
-                const commentInput = document.createElement('input');
-                commentInput.type = 'text';
-                commentInput.className = 'form-input small mb-1';
-                commentInput.placeholder = 'Comment (optional)';
-                commentInput.style.width = '120px';
-                commentInput.dataset.segmentIndex = seg.index;
-
-                const approveBtn = document.createElement('button');
-                approveBtn.type = 'button';
-                approveBtn.className = 'btn secondary small';
-                approveBtn.textContent = '👍';
-                approveBtn.title = 'Approve';
-                approveBtn.addEventListener('click', () => submitPipelineFeedback(seg.index, 'approve', commentInput.value));
-                const rejectBtn = document.createElement('button');
-                rejectBtn.type = 'button';
-                rejectBtn.className = 'btn secondary small';
-                rejectBtn.textContent = '👎';
-                rejectBtn.title = 'Reject';
-                rejectBtn.addEventListener('click', () => submitPipelineFeedback(seg.index, 'reject', commentInput.value));
-
-                feedbackCell.appendChild(commentInput);
-                feedbackCell.appendChild(document.createElement('br'));
-                feedbackCell.appendChild(approveBtn);
-                feedbackCell.appendChild(document.createTextNode(' '));
-                feedbackCell.appendChild(rejectBtn);
-            } else {
-                feedbackCell.textContent = '—';
+        } else {
+            if (cells[6].dataset.reason !== '') {
+                cells[6].innerHTML = '';
+                cells[6].textContent = '—';
+                cells[6].dataset.reason = '';
             }
+        }
 
-            const logsCell = document.createElement('td');
-            if (seg.verification_log && seg.verification_log.length) {
-                const details = document.createElement('details');
-                const summary = document.createElement('summary');
-                summary.textContent = `${seg.verification_log.length} log(s)`;
+        // Feedback cell — build once per segment when it becomes actionable so
+        // the user's half-typed comment isn't wiped by the next poll.
+        const recorded = feedbackMap && feedbackMap[String(seg.index)];
+        const isActionable = seg.status === 'passed' || seg.status === 'failed';
+        if (isActionable && cells[7].dataset.initialized !== 'true') {
+            cells[7].innerHTML = '';
+            cells[7].dataset.initialized = 'true';
+            if (recorded) {
+                const badge = document.createElement('div');
+                badge.className = 'text-sm';
+                badge.textContent = recorded.rating === 'approve' ? '✓ approved' : '✗ rejected';
+                if (recorded.comment) badge.title = recorded.comment;
+                cells[7].appendChild(badge);
+            }
+            const commentInput = document.createElement('input');
+            commentInput.type = 'text';
+            commentInput.className = 'form-input small mb-1';
+            commentInput.placeholder = 'Comment (optional)';
+            commentInput.style.width = '120px';
+            commentInput.dataset.segmentIndex = seg.index;
+
+            const approveBtn = document.createElement('button');
+            approveBtn.type = 'button';
+            approveBtn.className = 'btn secondary small';
+            approveBtn.textContent = '👍';
+            approveBtn.title = 'Approve';
+            approveBtn.addEventListener('click', () => submitPipelineFeedback(seg.index, 'approve', commentInput.value));
+            const rejectBtn = document.createElement('button');
+            rejectBtn.type = 'button';
+            rejectBtn.className = 'btn secondary small';
+            rejectBtn.textContent = '👎';
+            rejectBtn.title = 'Reject';
+            rejectBtn.addEventListener('click', () => submitPipelineFeedback(seg.index, 'reject', commentInput.value));
+
+            cells[7].appendChild(commentInput);
+            cells[7].appendChild(document.createElement('br'));
+            cells[7].appendChild(approveBtn);
+            cells[7].appendChild(document.createTextNode(' '));
+            cells[7].appendChild(rejectBtn);
+        } else if (!isActionable) {
+            cells[7].innerHTML = '';
+            cells[7].textContent = '—';
+            cells[7].dataset.initialized = '';
+        }
+
+        // Logs cell
+        if (seg.verification_log && seg.verification_log.length) {
+            const logSummaryText = `${seg.verification_log.length} log(s)`;
+            let details = cells[8].querySelector('details');
+            let summary = details ? details.querySelector('summary') : null;
+            let pre = details ? details.querySelector('pre') : null;
+            const logJson = JSON.stringify(seg.verification_log, null, 2);
+            if (!details) {
+                details = document.createElement('details');
+                summary = document.createElement('summary');
                 details.appendChild(summary);
-                const pre = document.createElement('pre');
+                pre = document.createElement('pre');
                 pre.className = 'pipeline-log';
-                pre.textContent = JSON.stringify(seg.verification_log, null, 2);
                 details.appendChild(pre);
-                logsCell.appendChild(details);
-            } else {
-                logsCell.textContent = '—';
+                cells[8].appendChild(details);
             }
-
-            tr.appendChild(document.createElement('td')).textContent = seg.index + 1;
-            tr.appendChild(statusCell);
-            tr.appendChild(audioCell);
-            tr.appendChild(scoreCell);
-            tr.appendChild(retriesCell);
-            tr.appendChild(failureCell);
-            tr.appendChild(agentDecisionCell);
-            tr.appendChild(feedbackCell);
-            tr.appendChild(logsCell);
-
-            pipelineSegmentsTbody.appendChild(tr);
-        });
+            summary.textContent = logSummaryText;
+            pre.textContent = logJson;
+        } else {
+            cells[8].innerHTML = '';
+            cells[8].textContent = '—';
+        }
     }
 
     function renderPipelineLogs(job) {
@@ -2031,10 +2158,9 @@ document.addEventListener('DOMContentLoaded', function () {
             });
         }
         if (events.length) {
-            pipelineLogsPanel.classList.remove('hidden');
             pipelineLogsContent.textContent = events.map((e) => e.message).join('\n');
         } else {
-            pipelineLogsPanel.classList.add('hidden');
+            pipelineLogsContent.textContent = 'Waiting for pipeline events...';
         }
     }
 
@@ -2063,11 +2189,15 @@ document.addEventListener('DOMContentLoaded', function () {
                 apiFetch(`/api/tts-pipeline/${currentPipelineJobId}/feedback`).catch(() => ({ feedback: {} })),
             ]);
             updatePipelineJobStatus(job.status);
+            if (job.job_name) {
+                currentPipelineJobName = job.job_name;
+                updatePipelineJobIdDisplay();
+            }
             renderSegments(job.segments, feedbackData.feedback || {});
             renderPipelineLogs(job);
             updateRetryFailedButton(job);
             if (job.status === 'done' && job.final_audio_path) {
-                showFinalAudio(job.final_audio_path);
+                showFinalAudio(job.final_audio_path, job.srt_path, job.job_name);
                 stopPipelinePolling();
             } else if (job.status === 'failed') {
                 stopPipelinePolling();
@@ -2103,13 +2233,23 @@ document.addEventListener('DOMContentLoaded', function () {
         }
     }
 
-    function showFinalAudio(finalPath) {
+    function showFinalAudio(finalPath, srtPath, jobName) {
         if (!pipelineFinalAudio || !pipelineFinalPlayer || !pipelineFinalDownload) return;
         pipelineFinalAudio.classList.remove('hidden');
         const url = `${API_BASE_URL}/api/tts-pipeline/${currentPipelineJobId}/final`;
         pipelineFinalPlayer.src = url;
         pipelineFinalDownload.href = url;
-        pipelineFinalDownload.download = finalPath.split(/[\\/]/).pop() || 'pipeline_final.wav';
+        const defaultName = jobName ? `${jobName}.wav` : 'pipeline_final.wav';
+        pipelineFinalDownload.download = finalPath.split(/[\\/]/).pop() || defaultName;
+
+        if (pipelineSrtDownload && srtPath) {
+            const srtUrl = `${API_BASE_URL}/api/tts-pipeline/${currentPipelineJobId}/srt`;
+            pipelineSrtDownload.href = srtUrl;
+            pipelineSrtDownload.download = srtPath.split(/[\\/]/).pop() || 'subtitles.srt';
+            pipelineSrtDownload.classList.remove('hidden');
+        } else if (pipelineSrtDownload) {
+            pipelineSrtDownload.classList.add('hidden');
+        }
     }
 
     function startPipelinePolling() {
@@ -2126,12 +2266,27 @@ document.addEventListener('DOMContentLoaded', function () {
     }
 
     // Event bindings
+    function showPipelineSection() {
+        if (pipelineSection) {
+            pipelineSection.classList.remove('hidden');
+            pipelineSection.scrollIntoView({ behavior: 'smooth' });
+        }
+    }
+
     if (navPipelineLink && pipelineSection) {
         navPipelineLink.addEventListener('click', function (e) {
             e.preventDefault();
-            pipelineSection.classList.toggle('hidden');
-            pipelineSection.scrollIntoView({ behavior: 'smooth' });
+            window.location.href = '/pipeline';
         });
+    }
+
+    // Route to the Pipeline view when accessing /pipeline directly.
+    if (window.location.pathname === '/pipeline') {
+        showPipelineSection();
+    }
+
+    if (pipelineScriptSelect) {
+        pipelineScriptSelect.addEventListener('change', updatePipelineTextFromScript);
     }
 
     if (pipelineVoiceMode) {
@@ -2156,13 +2311,22 @@ document.addEventListener('DOMContentLoaded', function () {
         pipelineRetryFailedBtn.addEventListener('click', retryFailedSegments);
     }
 
-    function loadExistingJob() {
+    async function loadExistingJob() {
         const jobId = pipelineLoadJobInput ? pipelineLoadJobInput.value.trim() : '';
         if (!jobId) {
             showPipelineSubmitStatus('Enter a job ID first (e.g. pipe-xxxxxxxxxxxx).', 'error');
             return;
         }
         currentPipelineJobId = jobId;
+        currentPipelineJobName = null;
+        try {
+            const job = await apiFetch(`/api/tts-pipeline/${jobId}`);
+            if (job.job_name) {
+                currentPipelineJobName = job.job_name;
+            }
+        } catch (error) {
+            console.error('Failed to prefetch job name:', error);
+        }
         showPipelineDashboard();
         startPipelinePolling();
         showPipelineSubmitStatus(`Loaded job ${jobId}`, 'success');
@@ -2177,6 +2341,7 @@ document.addEventListener('DOMContentLoaded', function () {
         });
     }
 
-    // Load voice lists on startup
+    // Load voice lists and available input scripts on startup
     loadPipelineInitialData();
+    loadPipelineScripts().then(updatePipelineTextFromScript);
 });

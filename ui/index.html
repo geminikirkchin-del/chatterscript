@@ -5,8 +5,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Chatterbox TTS Server</title>
-    <link rel="stylesheet" href="styles.css">
-    <script src="vendor/wavesurfer.min.js"></script>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/vendor/wavesurfer.min.js"></script>
 </head>
 
 <body>
@@ -25,7 +25,7 @@
                         </div>
                     </div>
                     <div class="navbar__actions">
-                        <a href="#pipeline" id="nav-pipeline-link" class="navbar__link">Pipeline</a>
+                        <a href="/pipeline" id="nav-pipeline-link" class="navbar__link">Pipeline</a>
                         <a href="/docs" target="_blank" class="navbar__link">API Docs</a>
 
                         <button id="theme-toggle-btn" type="button" class="theme-toggle" title="Toggle light/dark mode">
@@ -500,6 +500,21 @@
 
                         <form id="pipeline-form" action="#" method="post" onsubmit="return false;">
                             <div class="form-group">
+                                <label for="pipeline-script-select" class="form-label">Script Source</label>
+                                <select id="pipeline-script-select" class="form-select">
+                                    <option value="">Paste text manually</option>
+                                </select>
+                                <span class="form-hint ml-2">Or pick a .md file from the input/ folder.</span>
+                            </div>
+
+                            <div class="form-group">
+                                <label for="pipeline-job-name" class="form-label">Job Name</label>
+                                <input id="pipeline-job-name" type="text" class="form-input"
+                                    placeholder="Enter job name (used for folder & final audio)" />
+                                <span class="form-hint ml-2">Auto-filled when a script file is selected.</span>
+                            </div>
+
+                            <div class="form-group">
                                 <label for="pipeline-text" class="form-label">Script</label>
                                 <textarea id="pipeline-text" name="pipeline_text" rows="12" class="form-textarea"
                                     placeholder="Paste your long script here..." required></textarea>
@@ -584,6 +599,11 @@
                             </div>
                         </form>
 
+                        <details id="pipeline-logs-panel" class="mb-6 mt-6">
+                            <summary class="form-label cursor-pointer">Pipeline Logs</summary>
+                            <pre id="pipeline-logs-content" class="pipeline-log mt-2">Waiting for pipeline events...</pre>
+                        </details>
+
                         <div id="pipeline-dashboard" class="mt-8 hidden">
                             <div class="flex-row items-center justify-between mb-4">
                                 <h3 class="text-xl font-semibold">Job Dashboard</h3>
@@ -605,12 +625,8 @@
                                 <h4 class="form-label mb-2">Final Audio</h4>
                                 <audio id="pipeline-final-player" controls class="w-full mb-2"></audio>
                                 <a id="pipeline-final-download" href="#" class="btn secondary" download>Download Final Audio</a>
+                                <a id="pipeline-srt-download" href="#" class="btn secondary ml-2 hidden" download>Download SRT</a>
                             </div>
-
-                            <details id="pipeline-logs-panel" class="mb-6 hidden">
-                                <summary class="form-label cursor-pointer">Pipeline Logs</summary>
-                                <pre id="pipeline-logs-content" class="pipeline-log mt-2"></pre>
-                            </details>
 
                             <div class="overflow-x-auto">
                                 <table class="pipeline-table" id="pipeline-segments-table">
@@ -746,7 +762,7 @@
         </div>
     </div>
 
-    <script src="script.js" defer></script>
+    <script src="/script.js" defer></script>
 </body>
 
 </html>

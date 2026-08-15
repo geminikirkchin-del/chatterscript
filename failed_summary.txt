@@ -1,0 +1,32 @@
+=== Failed segment summary ===
+Segment 6: 要理解互联网对话，我们必须先认识七层模型，也就是OSI模型。...
+  failure_reason: trailing_audio_too_long
+  last attempt reason: trailing_audio_too_long
+    ending_artifact: trailing_audio_too_long
+Segment 12: HTTP、HTTPS、SMTP、FTP和DNS这些常见协议都位于这一层。...
+  failure_reason: duration_deviation
+  last attempt reason: duration_deviation
+    basic_audio: duration_deviation
+    whisperx_alignment: text_coverage_low
+    jiwer_content: wer_too_high
+Segment 13: HTTP负责网页传输，SMTP负责发送邮件，FTP负责文件传输，DNS负责把域名...
+  failure_reason: wer_too_high
+  last attempt reason: wer_too_high
+    jiwer_content: wer_too_high
+    ending_artifact: trailing_audio_too_long
+Segment 14: 紧接着是表示层，负责格式转换和加密压缩。...
+  failure_reason: duration_deviation
+  last attempt reason: duration_deviation
+    basic_audio: duration_deviation
+    ending_artifact: trailing_audio_too_long
+Segment 16: TLS和SSL加密就发生在这里。...
+  failure_reason: duration_deviation
+  last attempt reason: duration_deviation
+    basic_audio: duration_deviation
+    whisperx_alignment: text_coverage_low
+    jiwer_content: wer_too_high
+    ending_artifact: trailing_audio_too_long
+Segment 18: 它负责建立、管理和终止会话。...
+  failure_reason: trailing_audio_too_long
+  last attempt reason: trailing_audio_too_long
+    ending_artifact: trailing_audio_too_long

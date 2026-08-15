@@ -2,10 +2,11 @@
 
 import json
 import logging
+import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import soundfile as sf
 import numpy as np
@@ -359,6 +360,240 @@ class WhisperXAlignmentVerifier(QualityVerifier):
             score = 1.0
         else:
             score = 0.5
+
+        return LayerResult(
+            passed=failure_reason is None,
+            score=score,
+            failure_reason=failure_reason,
+            metrics=metrics,
+        )
+
+
+class EndingArtifactVerifier(QualityVerifier):
+    """
+    Hard-fail verifier for sentence-ending prosodic artifacts.
+
+    Detects two common TTS seed-lottery failures at the end of a segment:
+
+    1. Elongated final syllable/word (drawn-out vowel, breathy tail).
+       Measured by WhisperX word-duration ratio: last meaningful word
+       duration vs. median word duration.
+    2. Excessive trailing non-speech audio (uncut silence, long fade, or
+       low-energy noise after the last word). Measured by frame-level RMS.
+
+    Uses WhisperX word timestamps from the shared verification context so the
+    expensive alignment runs only once per segment.
+    """
+
+    requires_whisperx = True
+
+    @property
+    def name(self) -> str:
+        return "ending_artifact"
+
+    def _config(self) -> Dict[str, Any]:
+        return _layer_thresholds(self.name)
+
+    def _last_active_time(
+        self, audio: np.ndarray, sr: int, threshold_db: float = -50.0
+    ) -> float:
+        """Return the time (seconds) of the last frame above threshold_db."""
+        frame_sec = 0.01
+        frame = max(1, int(sr * frame_sec))
+        n = len(audio) // frame
+        if n == 0:
+            return 0.0
+        frames = audio[: n * frame].astype(np.float64).reshape(n, frame)
+        rms = np.sqrt(np.mean(frames ** 2, axis=1))
+        db = 20 * np.log10(np.maximum(rms, 1e-10))
+        active = np.where(db > threshold_db)[0]
+        if len(active) == 0:
+            return 0.0
+        return float(active[-1] + 1) * frame_sec
+
+    def _last_meaningful_word(
+        self, words: List[Dict[str, Any]]
+    ) -> Optional[Dict[str, Any]]:
+        """Return the last word that is not pure punctuation and has duration."""
+        punctuation_pattern = r"^[\u3001-\u303f\uff00-\uffef\"\'\"\"''.,!?;:@#$%^&*()\[\]{}|\\<>\u3000]+$"
+        for w in reversed(words):
+            text = w.get("word", "").strip()
+            duration = w.get("end", 0.0) - w.get("start", 0.0)
+            if duration > 0.0 and not re.match(punctuation_pattern, text):
+                return w
+        return words[-1] if words else None
+
+    def _last_n_words_rms_db(
+        self, audio: np.ndarray, sr: int, words: List[Dict[str, Any]], n: int = 6
+    ) -> Optional[float]:
+        """RMS dB of the final n words' audio region, or None if unavailable."""
+        if not words:
+            return None
+        meaningful = [w for w in words if w.get("end", 0.0) > w.get("start", 0.0)]
+        if not meaningful:
+            return None
+        region = meaningful[-n:] if len(meaningful) >= n else meaningful
+        start = region[0].get("start", 0.0)
+        end = region[-1].get("end", 0.0)
+        if end <= start:
+            return None
+        start_sample = int(start * sr)
+        end_sample = min(int(end * sr), len(audio))
+        if end_sample <= start_sample:
+            return None
+        chunk = audio[start_sample:end_sample]
+        rms = float(np.sqrt(np.mean(chunk.astype(np.float64) ** 2)))
+        return float(20 * np.log10(max(rms, 1e-10)))
+
+    def verify(
+        self,
+        audio_path: str,
+        original_text: str,
+        reference_voice_path: Optional[str],
+        language: str,
+        expected_duration: float,
+        context: Optional[VerificationContext] = None,
+    ) -> LayerResult:
+        cfg = self._config()
+        max_last_word_ratio = _get_threshold(cfg, "max_last_word_ratio", self.name)
+        max_trailing_audio_sec = _get_threshold(cfg, "max_trailing_audio_sec", self.name)
+        min_word_count = _get_threshold(cfg, "min_word_count", self.name)
+
+        result = context.whisperx_result if context is not None else None
+
+        if result is None:
+            return LayerResult(
+                passed=False,
+                score=0.0,
+                failure_reason="whisperx_unavailable",
+                metrics={
+                    "max_last_word_ratio": max_last_word_ratio,
+                    "max_trailing_audio_sec": max_trailing_audio_sec,
+                    "min_word_count": min_word_count,
+                },
+            )
+
+        audio, sr = sf.read(audio_path, dtype="float32")
+        if audio.ndim > 1:
+            audio = audio.mean(axis=1)
+        duration_sec = float(len(audio) / sr)
+
+        # Flatten WhisperX word timestamps.
+        words: List[Dict[str, Any]] = []
+        for seg in result.get("aligned_segments", []):
+            for w in seg.get("words", []):
+                words.append(w)
+
+        word_durations = [
+            w.get("end", 0.0) - w.get("start", 0.0)
+            for w in words
+            if w.get("end", 0.0) > w.get("start", 0.0)
+        ]
+
+        failure_reason: Optional[str] = None
+        metrics: Dict[str, Any] = {
+            "word_count": len(words),
+            "meaningful_word_count": len(word_durations),
+            "audio_duration_sec": round(duration_sec, 3),
+            "max_last_word_ratio": max_last_word_ratio,
+            "max_trailing_audio_sec": max_trailing_audio_sec,
+            "min_word_count": min_word_count,
+        }
+
+        # 1) Final-syllable elongation check (needs enough words for a stable median).
+        min_words = int(min_word_count) if min_word_count is not None else 5
+        if len(word_durations) >= min_words and len(word_durations) >= 2:
+            median_duration = sorted(word_durations)[len(word_durations) // 2]
+            last_word = self._last_meaningful_word(words)
+            if last_word is not None:
+                last_duration = last_word.get("end", 0.0) - last_word.get("start", 0.0)
+                last_word_text = last_word.get("word", "")
+                last_word_score = last_word.get("score")
+                last_word_ratio = (
+                    last_duration / median_duration if median_duration > 0 else 0.0
+                )
+                tail_rms_db = self._last_n_words_rms_db(audio, sr, words)
+
+                metrics.update(
+                    {
+                        "last_word": last_word_text,
+                        "last_word_duration_sec": round(last_duration, 3),
+                        "last_word_score": round(last_word_score, 3)
+                        if isinstance(last_word_score, (int, float))
+                        else None,
+                        "median_word_duration_sec": round(median_duration, 3),
+                        "last_word_ratio": round(last_word_ratio, 3),
+                        "tail_rms_db": round(tail_rms_db, 2)
+                        if tail_rms_db is not None
+                        else None,
+                    }
+                )
+
+                if (
+                    max_last_word_ratio is not None
+                    and last_word_ratio > max_last_word_ratio
+                ):
+                    failure_reason = "last_word_too_long"
+
+        # 2) Trailing non-speech audio check (works even for short sentences).
+        #    We compare the time between the last WhisperX word and the file end
+        #    with the RMS of the tail itself. A long, audible tail (constant noise
+        #    or loud artifact) fails; a long quiet fade-out is allowed.
+        max_trailing_tail_rms_db = _get_threshold(
+            cfg, "max_trailing_tail_rms_db", self.name
+        )
+        if failure_reason is None and (
+            max_trailing_audio_sec is not None
+            or max_trailing_tail_rms_db is not None
+        ):
+            last_word = self._last_meaningful_word(words)
+            speech_end_sec = (
+                last_word.get("end", 0.0) if last_word is not None else 0.0
+            )
+            if speech_end_sec <= 0.0:
+                # WhisperX did not give a usable end time; fall back to energy.
+                speech_end_sec = self._last_active_time(audio, sr, threshold_db=-60.0)
+
+            trailing_audio_sec = max(0.0, duration_sec - speech_end_sec)
+            metrics["speech_end_sec"] = round(speech_end_sec, 3)
+            metrics["trailing_audio_sec"] = round(trailing_audio_sec, 3)
+
+            trailing_tail_rms_db: Optional[float] = None
+            if trailing_audio_sec > 0.0:
+                trailing_start_sample = int(speech_end_sec * sr)
+                trailing_region = audio[trailing_start_sample:]
+                if len(trailing_region) > 0:
+                    # Use the last 500ms of the trailing region so a loud early
+                    # part of a fade does not drown out a quiet tail.
+                    tail_window_samples = min(int(sr * 0.5), len(trailing_region))
+                    tail_chunk = trailing_region[-tail_window_samples:]
+                    tail_rms = float(
+                        np.sqrt(np.mean(tail_chunk.astype(np.float64) ** 2))
+                    )
+                    trailing_tail_rms_db = float(
+                        20 * np.log10(max(tail_rms, 1e-10))
+                    )
+
+            metrics["trailing_tail_rms_db"] = (
+                round(trailing_tail_rms_db, 2)
+                if trailing_tail_rms_db is not None
+                else None
+            )
+
+            long_tail = (
+                max_trailing_audio_sec is not None
+                and trailing_audio_sec > max_trailing_audio_sec
+            )
+            loud_tail = (
+                max_trailing_tail_rms_db is not None
+                and trailing_tail_rms_db is not None
+                and trailing_tail_rms_db > max_trailing_tail_rms_db
+            )
+
+            if long_tail and loud_tail:
+                failure_reason = "trailing_audio_too_long"
+
+        score = 1.0 if failure_reason is None else 0.5
 
         return LayerResult(
             passed=failure_reason is None,

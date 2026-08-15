@@ -3,12 +3,105 @@
 import logging
 import subprocess
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 import numpy as np
 import soundfile as sf
 
 logger = logging.getLogger(__name__)
+
+
+def _seconds_to_srt_ts(seconds: float) -> str:
+    """Convert seconds to SRT timestamp format HH:MM:SS,mmm."""
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+    millis = int(round((seconds - int(seconds)) * 1000))
+    if millis >= 1000:
+        millis -= 1000
+        secs += 1
+    return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
+
+
+def write_srt(
+    subtitle_path: Path,
+    entries: List[Tuple[float, float, str]],
+) -> bool:
+    """
+    Write subtitle entries to an SRT file.
+
+    Args:
+        subtitle_path: destination .srt path.
+        entries: list of (start_sec, end_sec, text).
+
+    Returns:
+        True on success.
+    """
+    try:
+        subtitle_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(subtitle_path, "w", encoding="utf-8") as f:
+            for idx, (start, end, text) in enumerate(entries, start=1):
+                f.write(f"{idx}\n")
+                f.write(f"{_seconds_to_srt_ts(start)} --> {_seconds_to_srt_ts(end)}\n")
+                f.write(f"{text.strip()}\n\n")
+        logger.info(f"Wrote SRT subtitles: {subtitle_path}")
+        return True
+    except Exception as e:
+        logger.error(f"Failed to write SRT {subtitle_path}: {e}", exc_info=True)
+        return False
+
+
+def compose_segments_with_timing(
+    segment_paths: List[Path],
+    output_path: Path,
+    sr: int,
+    pause_ms: float = 150.0,
+) -> Tuple[bool, List[Tuple[float, float]]]:
+    """
+    Concatenate WAV files with silence between them and return segment timings.
+
+    Returns:
+        (success, timings) where timings is a list of (start_sec, end_sec)
+        for each input segment in the composed timeline.
+    """
+    if not segment_paths:
+        raise ValueError("Cannot compose empty segment list")
+
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    pause_samples = int(pause_ms / 1000.0 * sr)
+    pause_duration = pause_samples / sr
+    silence = np.zeros(pause_samples, dtype=np.float32)
+
+    pieces: List[np.ndarray] = []
+    timings: List[Tuple[float, float]] = []
+    current_time = 0.0
+
+    for seg_path in segment_paths:
+        data, file_sr = sf.read(str(seg_path), dtype="float32")
+        if data.ndim > 1:
+            data = data[:, 0]
+        if file_sr != sr:
+            try:
+                import librosa
+
+                data = librosa.resample(y=data, orig_sr=file_sr, target_sr=sr)
+            except Exception as e:
+                logger.error(f"Failed to resample {seg_path} from {file_sr} to {sr}: {e}")
+                return False, []
+        duration = len(data) / sr
+        timings.append((current_time, current_time + duration))
+        current_time += duration + pause_duration
+        pieces.append(data)
+        pieces.append(silence)
+
+    # Remove trailing silence.
+    if pieces:
+        pieces.pop()
+
+    final = np.concatenate(pieces)
+    sf.write(str(output_path), final, sr, subtype="pcm_16")
+    logger.info(f"Composed final audio: {output_path} ({len(final)} samples @ {sr}Hz)")
+    return True, timings
 
 
 def compose_segments(
@@ -29,37 +122,10 @@ def compose_segments(
     Returns:
         True on success, False otherwise.
     """
-    if not segment_paths:
-        raise ValueError("Cannot compose empty segment list")
-
-    output_path.parent.mkdir(parents=True, exist_ok=True)
-    pause_samples = int(pause_ms / 1000.0 * sr)
-    silence = np.zeros(pause_samples, dtype=np.float32)
-
-    pieces: List[np.ndarray] = []
-    for seg_path in segment_paths:
-        data, file_sr = sf.read(str(seg_path), dtype="float32")
-        if data.ndim > 1:
-            data = data[:, 0]
-        if file_sr != sr:
-            try:
-                import librosa
-
-                data = librosa.resample(y=data, orig_sr=file_sr, target_sr=sr)
-            except Exception as e:
-                logger.error(f"Failed to resample {seg_path} from {file_sr} to {sr}: {e}")
-                return False
-        pieces.append(data)
-        pieces.append(silence)
-
-    # Remove trailing silence.
-    if pieces:
-        pieces.pop()
-
-    final = np.concatenate(pieces)
-    sf.write(str(output_path), final, sr, subtype="pcm_16")
-    logger.info(f"Composed final audio: {output_path} ({len(final)} samples @ {sr}Hz)")
-    return True
+    success, _ = compose_segments_with_timing(
+        segment_paths, output_path, sr, pause_ms
+    )
+    return success
 
 
 def loudnorm_final_audio(

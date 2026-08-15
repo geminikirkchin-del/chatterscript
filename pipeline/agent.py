@@ -301,6 +301,16 @@ class ParameterAgent:
             deltas["exaggeration"] = params["exaggeration"] - old_exag
             reasons.append(f"{audio_failure}: lower exaggeration")
 
+        # Ending artifact (elongated final syllable or trailing audio): lower
+        # exaggeration to reduce prosodic drift; the generic seed change below
+        # provides a fresh generation.
+        if audio_failure == "ending_artifact":
+            old_exag = params.get("exaggeration", 0.5)
+            new_exag = max(0.25, old_exag + self.exaggeration_delta)
+            params["exaggeration"] = round(new_exag, 2)
+            deltas["exaggeration"] = params["exaggeration"] - old_exag
+            reasons.append("ending_artifact: lower exaggeration")
+
         # Clipping: lower exaggeration.
         if audio_failure == "clipping":
             old_exag = params.get("exaggeration", 0.5)

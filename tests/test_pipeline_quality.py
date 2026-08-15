@@ -2,7 +2,7 @@
 
 import tempfile
 from pathlib import Path
-from typing import Any, Dict
+from typing import Any, Dict, List
 from unittest.mock import MagicMock
 
 import numpy as np
@@ -793,3 +793,289 @@ class TestLibrosaSpectralVerifier:
             assert result.passed is True
             assert result.score == 0.0
             assert result.metrics["mfcc_mse"] is None
+
+
+# ---------------------------------------------------------------------------
+# Ending-artifact verifier (elongated final syllable + trailing audio)
+# ---------------------------------------------------------------------------
+
+
+def _make_ending_artifact_whisperx_result(
+    words: List[Dict[str, Any]],
+    reference: str = "reference text",
+) -> Dict[str, Any]:
+    """Build a WhisperX result with aligned word timestamps."""
+    return {
+        "transcription": " ".join(str(w.get("word", "")) for w in words),
+        "normalized_transcription": reference,
+        "normalized_reference": reference,
+        "mean_word_confidence": 0.85,
+        "text_coverage_ratio": 1.0,
+        "word_count": len(words),
+        "reference_unit_count": len(reference),
+        "language": "zh",
+        "whisperx_language": "zh",
+        "aligned_segments": [
+            {
+                "text": " ".join(str(w.get("word", "")) for w in words),
+                "start": words[0].get("start", 0.0) if words else 0.0,
+                "end": words[-1].get("end", 0.0) if words else 0.0,
+                "words": words,
+            }
+        ],
+    }
+
+
+def _write_tone_of_duration(path: Path, duration_sec: float, sr: int = 24000) -> None:
+    """Write a continuous sine tone of the exact requested duration."""
+    t = np.linspace(0, duration_sec, int(sr * duration_sec), dtype=np.float32)
+    tone = 0.5 * np.sin(2 * np.pi * 440 * t)
+    sf.write(str(path), tone, sr, subtype="PCM_16")
+
+
+class TestEndingArtifactVerifier:
+    def test_fails_elongated_last_word(self):
+        from pipeline.quality_layers import EndingArtifactVerifier
+
+        # Six words; median duration 0.2s, last word 0.5s -> 2.5x ratio.
+        words = [
+            {"word": "一", "start": 0.0, "end": 0.2, "score": 0.95},
+            {"word": "二", "start": 0.2, "end": 0.4, "score": 0.95},
+            {"word": "三", "start": 0.4, "end": 0.6, "score": 0.95},
+            {"word": "四", "start": 0.6, "end": 0.8, "score": 0.95},
+            {"word": "五", "start": 0.8, "end": 1.0, "score": 0.95},
+            {"word": "六", "start": 1.0, "end": 1.5, "score": 0.95},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "elongated.wav"
+            _write_tone_of_duration(path, 1.5)
+            verifier = EndingArtifactVerifier()
+            context = VerificationContext(
+                whisperx_result=_make_ending_artifact_whisperx_result(words)
+            )
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="reference text",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=1.5,
+                context=context,
+            )
+            assert result.passed is False
+            assert result.failure_reason == "last_word_too_long"
+            assert result.metrics["last_word_ratio"] == 2.5
+
+    def test_fails_loud_trailing_audio(self):
+        from pipeline.quality_layers import EndingArtifactVerifier
+
+        # Clean words ending at 1.0s, but audio continues with audible noise for
+        # 0.8s. The combined duration + tail-loudness check must flag it.
+        words = [
+            {"word": "一", "start": 0.0, "end": 0.2, "score": 0.95},
+            {"word": "二", "start": 0.2, "end": 0.4, "score": 0.95},
+            {"word": "三", "start": 0.4, "end": 0.6, "score": 0.95},
+            {"word": "四", "start": 0.6, "end": 0.8, "score": 0.95},
+            {"word": "五", "start": 0.8, "end": 1.0, "score": 0.95},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "trailing.wav"
+            sr = 24000
+            tone = 0.5 * np.sin(2 * np.pi * 440 * np.linspace(0, 1.0, sr, dtype=np.float32))
+            # Audible noise tail (~-30 dBFS) after the last word.
+            np.random.seed(42)
+            noise = np.random.normal(0.0, 0.03, int(sr * 0.8)).astype(np.float32)
+            sf.write(str(path), np.concatenate([tone, noise]), sr, subtype="PCM_16")
+
+            verifier = EndingArtifactVerifier()
+            context = VerificationContext(
+                whisperx_result=_make_ending_artifact_whisperx_result(words)
+            )
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="reference text",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=1.8,
+                context=context,
+            )
+            assert result.passed is False
+            assert result.failure_reason == "trailing_audio_too_long"
+            assert result.metrics["trailing_audio_sec"] > 0.7
+            assert result.metrics["trailing_tail_rms_db"] > -45.0
+
+    def test_passes_clean_ending(self):
+        from pipeline.quality_layers import EndingArtifactVerifier
+
+        # Six words of equal duration; audio ends with the last word.
+        words = [
+            {"word": "一", "start": 0.0, "end": 0.2, "score": 0.95},
+            {"word": "二", "start": 0.2, "end": 0.4, "score": 0.95},
+            {"word": "三", "start": 0.4, "end": 0.6, "score": 0.95},
+            {"word": "四", "start": 0.6, "end": 0.8, "score": 0.95},
+            {"word": "五", "start": 0.8, "end": 1.0, "score": 0.95},
+            {"word": "六", "start": 1.0, "end": 1.2, "score": 0.95},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "clean.wav"
+            _write_tone_of_duration(path, 1.2)
+            verifier = EndingArtifactVerifier()
+            context = VerificationContext(
+                whisperx_result=_make_ending_artifact_whisperx_result(words)
+            )
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="reference text",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=1.2,
+                context=context,
+            )
+            assert result.passed is True
+            assert result.failure_reason is None
+            assert result.metrics["last_word_ratio"] == 1.0
+
+    def test_skips_short_sentences(self):
+        from pipeline.quality_layers import EndingArtifactVerifier
+
+        # Only three words; median-duration check is skipped, so even a huge
+        # last-word ratio must not fail the segment.
+        words = [
+            {"word": "短", "start": 0.0, "end": 0.2, "score": 0.95},
+            {"word": "句", "start": 0.2, "end": 0.4, "score": 0.95},
+            {"word": "子", "start": 0.4, "end": 1.0, "score": 0.95},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "short.wav"
+            _write_tone_of_duration(path, 1.0)
+            verifier = EndingArtifactVerifier()
+            context = VerificationContext(
+                whisperx_result=_make_ending_artifact_whisperx_result(words)
+            )
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="reference text",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=1.0,
+                context=context,
+            )
+            assert result.passed is True
+            assert result.failure_reason is None
+            assert result.metrics["meaningful_word_count"] == 3
+
+    def test_whisperx_unavailable_without_context(self):
+        from pipeline.quality_layers import EndingArtifactVerifier
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tone.wav"
+            _write_test_tone(str(path))
+            verifier = EndingArtifactVerifier()
+            result = verifier.verify(
+                audio_path=str(path),
+                original_text="reference text",
+                reference_voice_path=None,
+                language="zh",
+                expected_duration=1.0,
+                context=None,
+            )
+            assert result.passed is False
+            assert result.failure_reason == "whisperx_unavailable"
+
+    def test_segment_147_seed888_fails_seed891_passes(self):
+        """Regression test using the real 147.wav variants if they exist."""
+        from pipeline.quality_layers import EndingArtifactVerifier
+
+        base_dir = Path("outputs/pipeline_jobs/pipe-67880bdb6dee_internet-dialogue-zh-cn/segments")
+        bad_path = base_dir / "147.wav"
+        good_path = base_dir / "147_variant_seed891.wav"
+
+        if not bad_path.exists() or not good_path.exists():
+            pytest.skip("segment 147 variant files not available")
+
+        verifier = EndingArtifactVerifier()
+
+        # Seed 888: last word "性" is ~0.342s vs median ~0.18s -> ratio ~1.9x.
+        bad_words = [
+            {"word": "實", "start": 0.252, "end": 0.433, "score": 1.0},
+            {"word": "際", "start": 0.433, "end": 0.594, "score": 0.998},
+            {"word": "上", "start": 0.594, "end": 0.795, "score": 1.0},
+            {"word": ",", "start": 0.795, "end": 0.935, "score": 0.857},
+            {"word": "很", "start": 0.935, "end": 1.156, "score": 1.0},
+            {"word": "多", "start": 1.156, "end": 1.317, "score": 1.0},
+            {"word": "應", "start": 1.317, "end": 1.458, "score": 0.999},
+            {"word": "用", "start": 1.458, "end": 1.699, "score": 1.0},
+            {"word": "會", "start": 1.699, "end": 1.819, "score": 1.0},
+            {"word": "在", "start": 1.819, "end": 2.041, "score": 1.0},
+            {"word": "U", "start": 2.041, "end": 2.221, "score": 0.889},
+            {"word": "T", "start": 2.221, "end": 2.382, "score": 0.875},
+            {"word": "P", "start": 2.382, "end": 2.543, "score": 0.875},
+            {"word": "之", "start": 2.543, "end": 2.684, "score": 0.963},
+            {"word": "上", "start": 2.684, "end": 2.945, "score": 0.999},
+            {"word": "自", "start": 2.945, "end": 3.106, "score": 0.999},
+            {"word": "己", "start": 3.106, "end": 3.286, "score": 0.998},
+            {"word": "實", "start": 3.286, "end": 3.487, "score": 0.997},
+            {"word": "現", "start": 3.487, "end": 3.688, "score": 0.967},
+            {"word": "可", "start": 3.688, "end": 3.849, "score": 0.999},
+            {"word": "靠", "start": 3.849, "end": 4.07, "score": 0.997},
+            {"word": "性", "start": 4.07, "end": 4.412, "score": 0.942},
+            {"word": "。", "start": 4.412, "end": 4.432, "score": 0.754},
+        ]
+        bad_context = VerificationContext(
+            whisperx_result=_make_ending_artifact_whisperx_result(bad_words)
+        )
+        bad_result = verifier.verify(
+            audio_path=str(bad_path),
+            original_text="实际上，很多应用会在UDP之上自己实现可靠性。",
+            reference_voice_path=None,
+            language="zh",
+            expected_duration=4.5,
+            context=bad_context,
+        )
+        assert bad_result.passed is False
+        assert bad_result.failure_reason == "last_word_too_long"
+        assert bad_result.metrics["last_word_ratio"] > 1.5
+
+        # Seed 891: last word "性" is short, trailing audio is minimal.
+        good_words = [
+            {"word": "實", "start": 0.312, "end": 0.492, "score": 0.999},
+            {"word": "際", "start": 0.492, "end": 0.653, "score": 0.999},
+            {"word": "上", "start": 0.653, "end": 0.833, "score": 1.0},
+            {"word": ",", "start": 0.833, "end": 1.174, "score": 0.941},
+            {"word": "很", "start": 1.174, "end": 1.375, "score": 1.0},
+            {"word": "多", "start": 1.375, "end": 1.536, "score": 1.0},
+            {"word": "應", "start": 1.536, "end": 1.696, "score": 0.999},
+            {"word": "用", "start": 1.696, "end": 1.897, "score": 1.0},
+            {"word": "會", "start": 1.897, "end": 2.057, "score": 1.0},
+            {"word": "在", "start": 2.057, "end": 2.278, "score": 1.0},
+            {"word": "物", "start": 2.278, "end": 2.478, "score": 0.91},
+            {"word": "體", "start": 2.478, "end": 2.639, "score": 0.943},
+            {"word": "批", "start": 2.639, "end": 2.779, "score": 0.939},
+            {"word": "置", "start": 2.779, "end": 2.92, "score": 0.857},
+            {"word": "上", "start": 2.92, "end": 3.241, "score": 1.0},
+            {"word": "自", "start": 3.241, "end": 3.381, "score": 0.988},
+            {"word": "己", "start": 3.381, "end": 3.562, "score": 0.999},
+            {"word": "實", "start": 3.562, "end": 3.742, "score": 0.998},
+            {"word": "現", "start": 3.742, "end": 3.963, "score": 0.963},
+            {"word": "可", "start": 3.963, "end": 4.123, "score": 0.976},
+            {"word": "靠", "start": 4.123, "end": 4.364, "score": 0.991},
+            {"word": "性", "start": 4.364, "end": 4.384, "score": 0.026},
+        ]
+        good_context = VerificationContext(
+            whisperx_result=_make_ending_artifact_whisperx_result(good_words)
+        )
+        good_result = verifier.verify(
+            audio_path=str(good_path),
+            original_text="实际上，很多应用会在UDP之上自己实现可靠性。",
+            reference_voice_path=None,
+            language="zh",
+            expected_duration=5.0,
+            context=good_context,
+        )
+        assert good_result.passed is True
+        assert good_result.failure_reason is None
+        # Seed 891 has a ~0.7s fade-out but the tail is quiet (< -40 dB).
+        assert good_result.metrics["trailing_tail_rms_db"] < -40.0

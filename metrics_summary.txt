@@ -1,0 +1,6 @@
+total attempts: 41
+ending_artifact passed: 16, failed: 25
+failed trail range: [0.509, 8.123]
+failed tail_db range: [-44.6, -22.9]
+passed trail range: [0.203, 0.474]
+passed tail_db range: [-51.0, -20.8]

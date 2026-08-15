@@ -151,6 +151,30 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                         "min_errors": 3,
                     },
                 },
+                # Ending-artifact detection: fail segments with an abnormally long
+                # final syllable (e.g. drawn-out vowel) or excessive trailing audio
+                # after the last word. The pipeline then retries with a new seed.
+                "ending_artifact": {
+                    "enabled": True,
+                    "hardfail": True,
+                    "thresholds": {
+                        # Last meaningful word duration must not exceed 1.5x the
+                        # median word duration. Segment 147 seed 888 scored 1.9x.
+                        "max_last_word_ratio": 1.5,
+                        # Non-speech audio after the last WhisperX word is limited.
+                        # Both duration AND tail loudness must exceed thresholds to
+                        # fail, so normal fade-outs are allowed but constant noise
+                        # tails (seed 889/890) are rejected.
+                        # Calibrated on Kirk_Zh zh narration: most healthy fade-outs
+                        # stay under 0.7s with tail RMS below -40 dB; obvious bad
+                        # tails are longer or louder.
+                        "max_trailing_audio_sec": 0.7,
+                        "max_trailing_tail_rms_db": -40.0,
+                        # Need at least this many words before the median-duration
+                        # check is statistically stable.
+                        "min_word_count": 5,
+                    },
+                },
                 "tempo_drift": {
                     "enabled": True,
                     "hardfail": False,

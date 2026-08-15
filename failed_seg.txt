@@ -1,0 +1,17 @@
+FAILED Segment 6:
+  retries: 5
+  attempt 0: reason=N/A
+    ending: passed=True, reason=None
+    metrics: lwr=0.1, trail=0.428, tail_db=-38.07
+  attempt 1: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.1, trail=0.61, tail_db=-35.67
+  attempt 2: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.11, trail=1.138, tail_db=-42.51
+  attempt 3: reason=N/A
+    ending: passed=True, reason=None
+    metrics: lwr=0.11, trail=0.379, tail_db=-34.23
+  attempt 4: reason=N/A
+    ending: passed=False, reason=trailing_audio_too_long
+    metrics: lwr=0.11, trail=0.581, tail_db=-36.26

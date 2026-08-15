@@ -136,6 +136,12 @@ class PipelineQualityVerifier:
 
             layers.append(JiwerContentVerifier())
 
+        # Ending-artifact layer: elongated final syllable + trailing audio.
+        if layer_config.get("ending_artifact", {}).get("enabled", True):
+            from pipeline.quality_layers import EndingArtifactVerifier
+
+            layers.append(EndingArtifactVerifier())
+
         # Tempo drift layer (feedback-only, pure numpy onset analysis).
         if layer_config.get("tempo_drift", {}).get("enabled", True):
             from pipeline.quality_layers import TempoDriftVerifier

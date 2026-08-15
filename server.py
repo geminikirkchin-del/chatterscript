@@ -80,6 +80,7 @@ from models import (  # Pydantic models
     PipelineJobResponse,
     PipelineJobSummaryResponse,
     PipelineJobListResponse,
+    PipelineScriptListResponse,
     PipelineFeedbackRequest,
     PipelineFeedbackResponse,
 )
@@ -441,6 +442,21 @@ async def get_web_ui(request: Request):
         return templates.TemplateResponse("index.html", {"request": request})
     except Exception as e_render:
         logger.error(f"Error rendering main UI page: {e_render}", exc_info=True)
+        return HTMLResponse(
+            "<html><body><h1>Internal Server Error</h1><p>Could not load the TTS interface. "
+            "Please check server logs for more details.</p></body></html>",
+            status_code=500,
+        )
+
+
+@app.get("/pipeline", response_class=HTMLResponse, include_in_schema=False)
+async def get_pipeline_ui(request: Request):
+    """Serves the same web interface at /pipeline so the Pipeline view has its own URL."""
+    logger.info("Request received for pipeline UI page ('/pipeline').")
+    try:
+        return templates.TemplateResponse("index.html", {"request": request})
+    except Exception as e_render:
+        logger.error(f"Error rendering pipeline UI page: {e_render}", exc_info=True)
         return HTMLResponse(
             "<html><body><h1>Internal Server Error</h1><p>Could not load the TTS interface. "
             "Please check server logs for more details.</p></body></html>",
@@ -1512,6 +1528,22 @@ async def retry_failed_pipeline_segments(job_id: str, background_tasks: Backgrou
     return PipelineSubmitResponse(job_id=job_id, status=PipelineJobStatus.RUNNING.value)
 
 
+def _read_input_script(filename: str) -> str:
+    """Read a script from the input/ folder, guarding against path traversal."""
+    if ".." in filename or "/" in filename or "\\" in filename:
+        raise HTTPException(status_code=400, detail="Invalid script filename.")
+    if not filename.lower().endswith(".md"):
+        raise HTTPException(status_code=400, detail="Only .md script files are supported.")
+    input_dir = Path(__file__).parent / "input"
+    script_path = input_dir / filename
+    try:
+        return script_path.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail=f"Script file not found: {filename}")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read script: {e}")
+
+
 @app.post(
     "/api/tts-pipeline",
     tags=["TTS Pipeline"],
@@ -1535,6 +1567,18 @@ async def submit_pipeline_job(
             detail="TTS engine model is not currently loaded or available.",
         )
 
+    text = request.text
+    job_name = request.job_name
+    if request.script_filename:
+        text = _read_input_script(request.script_filename)
+        if not job_name:
+            job_name = Path(request.script_filename).stem
+    if not text:
+        raise HTTPException(
+            status_code=400,
+            detail="Either 'text' or 'script_filename' must be provided.",
+        )
+
     voice_config = _build_voice_config(request)
     gen_params = _build_gen_params(request)
     pipeline_config: Dict[str, Any] = {}
@@ -1543,10 +1587,11 @@ async def submit_pipeline_job(
     pipeline_config["sample_rate"] = get_audio_sample_rate()
 
     job_id = pipeline_service.submit_job(
-        text=request.text,
+        text=text,
         voice_config=voice_config,
         gen_params=gen_params,
         pipeline_config=pipeline_config,
+        job_name=job_name,
     )
 
     max_segment_duration = (
@@ -1561,6 +1606,24 @@ async def submit_pipeline_job(
     )
     logger.info(f"Submitted pipeline job {job_id}")
     return PipelineSubmitResponse(job_id=job_id, status=PipelineJobStatus.PENDING.value)
+
+
+@app.get(
+    "/api/pipeline/scripts",
+    tags=["TTS Pipeline"],
+    summary="List available input scripts",
+    response_model=PipelineScriptListResponse,
+)
+async def list_pipeline_scripts():
+    """List .md script files available in the input/ folder."""
+    input_dir = Path(__file__).parent / "input"
+    scripts = []
+    if input_dir.is_dir():
+        scripts = sorted(
+            f.name for f in input_dir.iterdir()
+            if f.is_file() and f.suffix.lower() == ".md"
+        )
+    return PipelineScriptListResponse(scripts=scripts)
 
 
 @app.get(
@@ -1580,6 +1643,7 @@ async def list_pipeline_jobs():
             final_audio_path=s.final_audio_path,
             created_at=s.created_at,
             updated_at=s.updated_at,
+            job_name=s.job_name,
         )
         for s in summaries
     ]
@@ -1606,8 +1670,12 @@ async def get_pipeline_job(job_id: str):
         text=job.text,
         segments=[seg.to_dict() for seg in job.segments],
         final_audio_path=job.final_audio_path,
+        srt_path=job.srt_path,
         created_at=job.created_at,
         updated_at=job.updated_at,
+        job_name=job.job_name,
+        total_generation_time_sec=job.total_generation_time_sec,
+        total_verification_time_sec=job.total_verification_time_sec,
     )
 
 
@@ -1638,6 +1706,34 @@ async def get_pipeline_final_audio(job_id: str):
     final_path = Path(job.final_audio_path)
     media_type = f"audio/{final_path.suffix.lstrip('.')}"
     return FileResponse(str(final_path), media_type=media_type, filename=final_path.name)
+
+
+@app.get(
+    "/api/tts-pipeline/{job_id}/srt",
+    tags=["TTS Pipeline"],
+    summary="Download the composed SRT subtitle file",
+    responses={
+        404: {"model": ErrorResponse, "description": "Job or SRT file not found."},
+        409: {"model": ErrorResponse, "description": "Job not yet complete."},
+    },
+)
+async def get_pipeline_srt(job_id: str):
+    """Download the sentence-level SRT subtitle file for a completed pipeline job."""
+    job = pipeline_service.get_job(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail=f"Pipeline job '{job_id}' not found.")
+    if job.status != PipelineJobStatus.DONE:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Pipeline job '{job_id}' is not ready (status={job.status.value}).",
+        )
+    if not job.srt_path or not Path(job.srt_path).exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"SRT file for pipeline job '{job_id}' not found.",
+        )
+    srt_path = Path(job.srt_path)
+    return FileResponse(str(srt_path), media_type="application/x-subrip", filename=srt_path.name)
 
 
 @app.get(

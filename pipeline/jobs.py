@@ -1,6 +1,7 @@
 # Pipeline job orchestration: submit, run, compose.
 
 import logging
+import re
 import time
 import uuid
 from pathlib import Path
@@ -17,7 +18,12 @@ from config import (
     get_pipeline_max_retry_count,
 )
 from pipeline.agent import AgentDecision, ParameterAgent
-from pipeline.composer import compose_segments, loudnorm_final_audio
+from pipeline.composer import (
+    compose_segments,
+    compose_segments_with_timing,
+    loudnorm_final_audio,
+    write_srt,
+)
 from pipeline.feedback import FeedbackStore
 from pipeline.generator import generate_segment_audio
 from pipeline.models import (
@@ -81,6 +87,9 @@ class PipelineService:
             self._quality_verifier = PipelineQualityVerifier.from_config()
         return self._quality_verifier
 
+    def _job_dir(self, job: PipelineJob) -> Path:
+        return self.base_dir / (job.folder_name or job.job_id)
+
     def _get_parameter_agent(self) -> ParameterAgent:
         if self._parameter_agent is None:
             self._parameter_agent = ParameterAgent(feedback_store=self.feedback_store)
@@ -92,9 +101,14 @@ class PipelineService:
         voice_config: Dict[str, Any],
         gen_params: Dict[str, Any],
         pipeline_config: Optional[Dict[str, Any]] = None,
+        job_name: Optional[str] = None,
     ) -> str:
         """Create a new pipeline job and persist it."""
         job_id = f"pipe-{uuid.uuid4().hex[:12]}"
+        folder_name = job_id
+        if job_name:
+            slug = re.sub(r"[^\w\-]+", "_", job_name).strip("_") or "job"
+            folder_name = f"{job_id}_{slug}"
         now = time.time()
         job = PipelineJob(
             job_id=job_id,
@@ -106,6 +120,8 @@ class PipelineService:
             created_at=now,
             updated_at=now,
             pipeline_config=pipeline_config or {},
+            job_name=job_name,
+            folder_name=folder_name,
         )
         self.store.save(job)
         logger.info(f"Created pipeline job {job_id}")
@@ -184,7 +200,7 @@ class PipelineService:
                     # Verification status stays FAILED in the dashboard; the
                     # final simply uses the best take we could get.
                     best_effort = (
-                        self.base_dir / job_id / "segments" / f"{seg_record.index}.wav"
+                        self._job_dir(job) / "segments" / f"{seg_record.index}.wav"
                     )
                     if best_effort.exists():
                         segment_files.append(best_effort)
@@ -192,6 +208,11 @@ class PipelineService:
                             f"Job {job_id} segment {idx}: including unverified "
                             f"best-effort audio (all attempts failed)"
                         )
+
+            total_gen = sum((s.generation_time_sec or 0) for s in job.segments)
+            total_verify = sum((s.verification_time_sec or 0) for s in job.segments)
+            job.total_generation_time_sec = round(total_gen, 3)
+            job.total_verification_time_sec = round(total_verify, 3)
 
             if not segment_files:
                 job.status = PipelineJobStatus.FAILED
@@ -207,11 +228,19 @@ class PipelineService:
             job.final_audio_path = str(final_path)
             job.status = PipelineJobStatus.DONE
             self.store.save(job)
-            logger.info(f"Job {job_id} completed: {final_path}")
+            logger.info(
+                f"Job {job_id} completed: {final_path} "
+                f"(gen={job.total_generation_time_sec:.1f}s, "
+                f"verify={job.total_verification_time_sec:.1f}s)"
+            )
             return job
 
         except Exception as e:
             logger.error(f"Pipeline job {job_id} failed: {e}", exc_info=True)
+            total_gen = sum((s.generation_time_sec or 0) for s in job.segments)
+            total_verify = sum((s.verification_time_sec or 0) for s in job.segments)
+            job.total_generation_time_sec = round(total_gen, 3)
+            job.total_verification_time_sec = round(total_verify, 3)
             job.status = PipelineJobStatus.FAILED
             self.store.save(job)
             return job
@@ -280,13 +309,18 @@ class PipelineService:
             if s.status == SegmentStatus.PASSED and s.audio_path:
                 segment_files.append(Path(s.audio_path))
             else:
-                best_effort = self.base_dir / job_id / "segments" / f"{s.index}.wav"
+                best_effort = self._job_dir(job) / "segments" / f"{s.index}.wav"
                 if best_effort.exists():
                     segment_files.append(best_effort)
                     logger.warning(
                         f"Job {job_id} segment {s.index}: including unverified "
                         f"best-effort audio (all attempts failed)"
                     )
+        total_gen = sum((s.generation_time_sec or 0) for s in job.segments)
+        total_verify = sum((s.verification_time_sec or 0) for s in job.segments)
+        job.total_generation_time_sec = round(total_gen, 3)
+        job.total_verification_time_sec = round(total_verify, 3)
+
         if not segment_files:
             job.status = PipelineJobStatus.FAILED
             self.store.save(job)
@@ -313,6 +347,9 @@ class PipelineService:
         """
         Compose verified segment WAVs into the final output with loudnorm.
 
+        Also writes a sentence-level SRT subtitle file based on the composed
+        segment timings.
+
         Returns the final path on success, None on failure.
         """
         job_id = job.job_id
@@ -322,8 +359,11 @@ class PipelineService:
         target_sr = job.pipeline_config.get(
             "sample_rate", get_audio_sample_rate()
         )
-        final_dir = self.base_dir / job_id
-        final_path = final_dir / f"final.{final_format}"
+        final_dir = self._job_dir(job)
+        base_name = "final"
+        if job.job_name:
+            base_name = re.sub(r"[^\w\-]+", "_", job.job_name).strip("_") or "final"
+        final_path = final_dir / f"{base_name}.{final_format}"
 
         # Final loudnorm targets come from the dedicated broadcast-target
         # config, independent of the lenient per-segment audio_metrics
@@ -346,7 +386,19 @@ class PipelineService:
 
         temp_wav = final_dir / "final_temp.wav"
         normalized_wav = final_dir / "final_normalized.wav"
-        ok = compose_segments(segment_files, temp_wav, sr=target_sr, pause_ms=pause_ms)
+        ok, timings = compose_segments_with_timing(
+            segment_files, temp_wav, sr=target_sr, pause_ms=pause_ms
+        )
+        if ok and timings:
+            # Write sentence-level SRT from composed segment timings.
+            srt_path = final_dir / f"{base_name}.srt"
+            srt_entries = [
+                (start, end, seg.text)
+                for (start, end), seg in zip(timings, job.segments)
+            ]
+            write_srt(srt_path, srt_entries)
+            job.srt_path = str(srt_path)
+
         if ok:
             # Final loudnorm ensures consistent loudness across the whole long-form output.
             ok = loudnorm_final_audio(
@@ -400,7 +452,7 @@ class PipelineService:
         Returns the segment WAV path if it passes, None if it ultimately fails.
         """
         job_id = job.job_id
-        seg_dir = self.base_dir / job_id / "segments"
+        seg_dir = self._job_dir(job) / "segments"
         seg_dir.mkdir(parents=True, exist_ok=True)
         seg_path = seg_dir / f"{seg_record.index}.wav"
 
@@ -492,12 +544,14 @@ class PipelineService:
         seg_record.status = SegmentStatus.GENERATING
         self.store.save(job)
 
+        gen_start = time.perf_counter()
         audio_np, sr = generate_segment_audio(
             text=seg_record.text,
             audio_prompt_path=audio_prompt_path,
             gen_params=seg_record.gen_params,
             synthesize_fn=synthesize_fn,
         )
+        gen_time = time.perf_counter() - gen_start
 
         if audio_np is None or sr is None:
             log_entry: Dict[str, Any] = {
@@ -514,6 +568,7 @@ class PipelineService:
                 }
             seg_record.verification_log.append(log_entry)
             seg_record.retry_count = attempt
+            seg_record.generation_time_sec = gen_time
             self.store.save(job)
             empty_quality = QualityVerificationResult(
                 passed=False,
@@ -521,10 +576,22 @@ class PipelineService:
                 failure_reason="generation returned no audio",
                 layer_results={},
             )
-            return AttemptResult(passed=False, quality_result=empty_quality)
+            return AttemptResult(
+                passed=False,
+                quality_result=empty_quality,
+                generation_time_sec=gen_time,
+            )
 
+        temp_seg_path = seg_path.with_suffix(".tmp.wav")
         try:
-            sf.write(str(seg_path), audio_np, sr, subtype="pcm_16")
+            sf.write(str(temp_seg_path), audio_np, sr, subtype="pcm_16")
+            # Atomic publish: readers (including the UI audio player) only see
+            # the fully-written file, never a partially-written one.
+            try:
+                temp_seg_path.replace(seg_path)
+            except OSError:
+                import shutil
+                shutil.move(str(temp_seg_path), str(seg_path))
         except Exception as e:
             # A transient write failure (e.g. Windows file lock from a media
             # player holding the segment open) must not kill the whole job —
@@ -547,6 +614,7 @@ class PipelineService:
                 }
             seg_record.verification_log.append(log_entry)
             seg_record.retry_count = attempt
+            seg_record.generation_time_sec = gen_time
             self.store.save(job)
             write_failed_quality = QualityVerificationResult(
                 passed=False,
@@ -554,7 +622,11 @@ class PipelineService:
                 failure_reason="audio_write_failed",
                 layer_results={},
             )
-            return AttemptResult(passed=False, quality_result=write_failed_quality)
+            return AttemptResult(
+                passed=False,
+                quality_result=write_failed_quality,
+                generation_time_sec=gen_time,
+            )
 
         # Polish the generated audio BEFORE verification: spectral-subtract the
         # constant vocoder noise bed, then normalize over-long pauses. The
@@ -575,6 +647,7 @@ class PipelineService:
 
         # Run the multi-layer quality verifier (basic audio + audio metrics + content).
         # The audio prompt doubles as the reference voice for speaker-similarity layers.
+        verify_start = time.perf_counter()
         quality_result = quality_verifier.verify(
             audio_path=str(seg_path),
             original_text=seg_record.text,
@@ -582,6 +655,7 @@ class PipelineService:
             language=language,
             expected_duration=expected_duration,
         )
+        verify_time = time.perf_counter() - verify_start
 
         log_entry: Dict[str, Any] = {
             "attempt": attempt,
@@ -619,6 +693,9 @@ class PipelineService:
         basic_layer = quality_result.layer_results.get("basic_audio", {})
         audio_metrics = basic_layer.get("metrics", {})
 
+        seg_record.generation_time_sec = (seg_record.generation_time_sec or 0) + gen_time
+        seg_record.verification_time_sec = (seg_record.verification_time_sec or 0) + verify_time
+
         if quality_result.passed:
             seg_record.status = SegmentStatus.PASSED
             seg_record.audio_path = str(seg_path)
@@ -628,7 +705,11 @@ class PipelineService:
             seg_record.retry_count = attempt
             self.store.save(job)
             return AttemptResult(
-                passed=True, quality_result=quality_result, audio_metrics=audio_metrics
+                passed=True,
+                quality_result=quality_result,
+                audio_metrics=audio_metrics,
+                generation_time_sec=gen_time,
+                verification_time_sec=verify_time,
             )
 
         seg_record.retry_count = attempt
@@ -639,7 +720,11 @@ class PipelineService:
             f"{quality_result.failure_reason}"
         )
         return AttemptResult(
-            passed=False, quality_result=quality_result, audio_metrics=audio_metrics
+            passed=False,
+            quality_result=quality_result,
+            audio_metrics=audio_metrics,
+            generation_time_sec=gen_time,
+            verification_time_sec=verify_time,
         )
 
     def _resolve_audio_prompt_path(self, voice_config: Dict[str, Any]) -> Optional[str]:
