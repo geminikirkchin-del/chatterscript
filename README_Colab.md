@@ -1,6 +1,6 @@
-# README_Colab.md — Run Chatterbox TTS Server on Google Colab (T4 GPU)
+# README_Colab.md — Run Chatterscript on Google Colab (T4 GPU)
 
-This guide shows how to run **Chatterbox-TTS-Server** in a fresh Google Colab notebook with a T4 GPU, using an isolated micromamba environment to avoid Colab package conflicts.  
+This guide shows how to run **Chatterscript** in a fresh Google Colab notebook with a T4 GPU, using an isolated micromamba environment to avoid Colab package conflicts.  
 You will open the Web UI via Colab’s built-in port proxy: Colab displays a `https://localhost:PORT/` link that actually points to an externally reachable `*.colab.*` URL. [web:146]
 
 ---
@@ -132,7 +132,7 @@ What this cell does:
 - Clones the server repo.
 - Installs server dependencies inside `cb311`.
 - Runs `server.py` in the **foreground** and prints all logs live.
-- Writes a full log file to: `/content/chatterbox_server_stdout.log`
+- Writes a full log file to: `/content/chatterscript_server_stdout.log`
 - Prints a Colab proxy link when port 8004 is reachable; Colab will show it as `https://localhost:8004/` but it resolves to a `*.colab.*` URL that opens in a new tab. [web:146]
 - Queries `/api/model-info` to confirm the model is loaded. [file:21]
 
@@ -142,8 +142,8 @@ import os, time, subprocess, socket, requests
 from pathlib import Path
 
 PORT = 8004
-REPO_DIR = "/content/Chatterbox-TTS-Server"
-LOG_STDOUT = "/content/chatterbox_server_stdout.log"
+REPO_DIR = "/content/Chatterscript"
+LOG_STDOUT = "/content/chatterscript_server_stdout.log"
 
 def sh(cmd, check=False):
     return subprocess.run(["bash", "-lc", cmd], check=check)
@@ -158,8 +158,8 @@ def port_open(host="127.0.0.1", port=PORT, timeout=0.25):
 os.chdir("/content")
 
 # Fresh clone
-sh("rm -rf /content/Chatterbox-TTS-Server", check=False)
-sh("git clone https://github.com/devnen/Chatterbox-TTS-Server.git", check=True)
+sh("rm -rf /content/Chatterscript", check=False)
+sh("git clone https://github.com/devnen/Chatterscript.git", check=True)
 os.chdir(REPO_DIR)
 
 print("=== Quick system checks ===")
@@ -298,4 +298,4 @@ During Cell 4, downloads are stored under `/content/hf_home` (set by `HF_HOME` i
 
 ## Notes
 - If Colab warns that `serve_kernel_port_as_window` might stop working, it still usually provides a working link; click the link that Colab prints (it looks like `https://localhost:8004/` but maps to a `*.colab.*` URL). [web:146]
-- For bug reports, attach `/content/chatterbox_server_stdout.log` and the `/api/model-info` output. [file:21]
+- For bug reports, attach `/content/chatterscript_server_stdout.log` and the `/api/model-info` output. [file:21]

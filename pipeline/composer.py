@@ -1,6 +1,7 @@
 # Audio composition: concatenate segment WAVs with inter-segment silence.
 
 import logging
+import re
 import subprocess
 from pathlib import Path
 from typing import List, Tuple
@@ -9,6 +10,14 @@ import numpy as np
 import soundfile as sf
 
 logger = logging.getLogger(__name__)
+
+# Clause-level punctuation used to break long subtitles without cutting
+# through a sentence.  Chinese full-width forms are preferred for zh content.
+_CLAUSE_SPLIT_PATTERN = re.compile(r"(?<=[，；、,;])\s*")
+
+# Default ceiling for a single SRT entry.  Audio is still generated one
+# sentence at a time; this only controls how the sentence text is displayed.
+_DEFAULT_MAX_SUBTITLE_DURATION_SEC = 7.0
 
 
 def _seconds_to_srt_ts(seconds: float) -> str:
@@ -23,9 +32,98 @@ def _seconds_to_srt_ts(seconds: float) -> str:
     return f"{hours:02d}:{minutes:02d}:{secs:02d},{millis:03d}"
 
 
+def _is_primarily_cjk(text: str) -> bool:
+    """Return True if more than half of the non-space characters are CJK."""
+    stripped = text.replace(" ", "")
+    if not stripped:
+        return False
+    cjk_count = sum(1 for ch in stripped if "\u4e00" <= ch <= "\u9fff")
+    return cjk_count / len(stripped) > 0.5
+
+
+def _unit_count(text: str) -> int:
+    """Count CJK characters or words, depending on the dominant script."""
+    return len(text) if _is_primarily_cjk(text) else len(text.split())
+
+
+def _split_at_clauses(text: str) -> List[str]:
+    """Split text at clause punctuation while keeping punctuation attached."""
+    clauses = [c.strip() for c in _CLAUSE_SPLIT_PATTERN.split(text) if c.strip()]
+    return clauses or [text]
+
+
+def _chunk_by_units(text: str, max_units: int) -> List[str]:
+    """Split text into chunks of at most max_units units."""
+    if max_units < 1:
+        return [text]
+    if _is_primarily_cjk(text):
+        return [text[i : i + max_units] for i in range(0, len(text), max_units)]
+
+    words = text.split()
+    chunks: List[str] = []
+    current: List[str] = []
+    for word in words:
+        current.append(word)
+        if len(current) >= max_units:
+            chunks.append(" ".join(current))
+            current = []
+    if current:
+        chunks.append(" ".join(current))
+    return chunks or [text]
+
+
+def _split_srt_entries(
+    entries: List[Tuple[float, float, str]],
+    max_duration: float = _DEFAULT_MAX_SUBTITLE_DURATION_SEC,
+) -> List[Tuple[float, float, str]]:
+    """
+    Break long sentence-level SRT entries into clause-sized pieces.
+
+    Audio remains sentence-level; this only changes the on-screen text timing.
+    Durations are apportioned by unit count (CJK chars or words).
+    """
+    if max_duration <= 0:
+        return entries
+
+    new_entries: List[Tuple[float, float, str]] = []
+    for start, end, text in entries:
+        total_duration = end - start
+        if total_duration <= max_duration:
+            new_entries.append((start, end, text))
+            continue
+
+        clauses = _split_at_clauses(text)
+        total_units = sum(_unit_count(c) for c in clauses) or 1
+
+        current_time = start
+        for clause in clauses:
+            clause_units = _unit_count(clause)
+            clause_duration = total_duration * (clause_units / total_units)
+
+            # If an individual clause is still too long, split it by unit count.
+            if clause_duration > max_duration:
+                n_chunks = max(2, int(round(clause_duration / max_duration)))
+                max_units = max(1, clause_units // n_chunks)
+                sub_chunks = _chunk_by_units(clause, max_units)
+                sub_total_units = sum(_unit_count(c) for c in sub_chunks) or 1
+                for sub in sub_chunks:
+                    sub_units = _unit_count(sub)
+                    sub_duration = clause_duration * (sub_units / sub_total_units)
+                    sub_end = min(current_time + sub_duration, end)
+                    new_entries.append((current_time, sub_end, sub))
+                    current_time = sub_end
+            else:
+                clause_end = min(current_time + clause_duration, end)
+                new_entries.append((current_time, clause_end, clause))
+                current_time = clause_end
+
+    return new_entries
+
+
 def write_srt(
     subtitle_path: Path,
     entries: List[Tuple[float, float, str]],
+    max_subtitle_duration_sec: float = _DEFAULT_MAX_SUBTITLE_DURATION_SEC,
 ) -> bool:
     """
     Write subtitle entries to an SRT file.
@@ -33,18 +131,24 @@ def write_srt(
     Args:
         subtitle_path: destination .srt path.
         entries: list of (start_sec, end_sec, text).
+        max_subtitle_duration_sec: longest on-screen duration for one SRT
+            entry.  Longer sentences are split at clause punctuation.
 
     Returns:
         True on success.
     """
     try:
         subtitle_path.parent.mkdir(parents=True, exist_ok=True)
+        split_entries = _split_srt_entries(entries, max_subtitle_duration_sec)
         with open(subtitle_path, "w", encoding="utf-8") as f:
-            for idx, (start, end, text) in enumerate(entries, start=1):
+            for idx, (start, end, text) in enumerate(split_entries, start=1):
                 f.write(f"{idx}\n")
                 f.write(f"{_seconds_to_srt_ts(start)} --> {_seconds_to_srt_ts(end)}\n")
                 f.write(f"{text.strip()}\n\n")
-        logger.info(f"Wrote SRT subtitles: {subtitle_path}")
+        logger.info(
+            f"Wrote SRT subtitles: {subtitle_path} "
+            f"({len(split_entries)} entries from {len(entries)} segments)"
+        )
         return True
     except Exception as e:
         logger.error(f"Failed to write SRT {subtitle_path}: {e}", exc_info=True)

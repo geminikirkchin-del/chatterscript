@@ -1,6 +1,6 @@
 # requirements-rocm.txt
 #
-# AMD ROCm dependencies for Chatterbox TTS Server.
+# AMD ROCm dependencies for Chatterscript.
 #
 # IMPORTANT: PyTorch (torch, torchaudio, torchvision, triton) are installed
 # separately via requirements-rocm-init.txt to avoid version conflicts.

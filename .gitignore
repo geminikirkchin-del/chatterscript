@@ -53,3 +53,6 @@ _local/
 
 # Ignore local embedded Python runtime (Windows dev convenience)
 python_embedded/
+
+# Local-only session history artifacts (never committed)
+session_history_*/

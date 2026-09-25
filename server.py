@@ -91,6 +91,20 @@ from pipeline.models import PipelineJobStatus
 from pydantic import BaseModel, Field
 
 
+def _resolve_language(language: Optional[str], default_fn) -> str:
+    """Normalize a caller-supplied language code and fall back to the default.
+
+    Empty strings are treated as "not provided" so that clients such as
+    VidElixir (which may send `language: ""` for auto-detect) still get the
+    configured default instead of passing an invalid empty language_id to the
+    multilingual model.  Locale suffixes (e.g. zh-CN, en-US) are reduced to the
+    base code that the underlying TTS model supports.
+    """
+    if not language:
+        return default_fn()
+    return language.lower().split("-")[0]
+
+
 class OpenAISpeechRequest(BaseModel):
     model: str
     input_: str = Field(..., alias="input")
@@ -1037,9 +1051,7 @@ async def custom_tts_endpoint(
             request.cfg_weight if request.cfg_weight is not None else get_gen_default_cfg_weight()
         )
         seed_val = request.seed if request.seed is not None else get_gen_default_seed()
-        language_val = (
-            request.language if request.language is not None else get_gen_default_language()
-        )
+        language_val = _resolve_language(request.language, get_gen_default_language)
 
         CROSSFADE_MS_STREAM = 20
 
@@ -1133,10 +1145,8 @@ async def custom_tts_endpoint(
                 seed=(
                     request.seed if request.seed is not None else get_gen_default_seed()
                 ),
-                language=(
-                    request.language
-                    if request.language is not None
-                    else get_gen_default_language()
+                language=_resolve_language(
+                    request.language, get_gen_default_language
                 ),
             )
             perf_monitor.record(f"Engine synthesized chunk {i+1}")
@@ -1448,10 +1458,8 @@ def _build_gen_params(request: PipelineSubmitRequest) -> Dict[str, Any]:
             if request.speed_factor is not None
             else get_pipeline_default_speed_factor()
         ),
-        "language": (
-            request.language
-            if request.language is not None
-            else get_pipeline_default_language()
+        "language": _resolve_language(
+            request.language, get_pipeline_default_language
         ),
     }
 
@@ -1954,7 +1962,7 @@ async def srt_tts_endpoint(
         cfg_weight_val = cfg_weight if cfg_weight is not None else get_gen_default_cfg_weight()
         seed_val = seed if seed is not None else get_gen_default_seed()
         speed_factor_val = speed_factor if speed_factor is not None else get_gen_default_speed_factor()
-        language_val = language if language is not None else get_gen_default_language()
+        language_val = _resolve_language(language, get_gen_default_language)
 
         # --- Synthesize each subtitle ---
         loop = asyncio.get_running_loop()
@@ -2171,7 +2179,7 @@ async def openai_speech_endpoint(request: OpenAISpeechRequest):
                 exaggeration=get_gen_default_exaggeration(),
                 cfg_weight=get_gen_default_cfg_weight(),
                 seed=chunk_seed,
-                language=request.language or get_gen_default_language(),
+                language=_resolve_language(request.language, get_gen_default_language),
             )
 
             if audio_tensor is None or sr is None:

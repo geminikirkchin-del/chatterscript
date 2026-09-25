@@ -1,6 +1,6 @@
 
 services:
-  chatterbox-tts-server:
+  chatterscript:
     build:
       context: .
       dockerfile: Dockerfile.strixhalo

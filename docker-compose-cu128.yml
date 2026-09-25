@@ -1,12 +1,12 @@
 services:
-  chatterbox-tts-server:
+  chatterscript:
     build:
       context: .
       dockerfile: Dockerfile.cu128
       args:
         RUNTIME: nvidia
-    image: chatterbox-tts-server:cu128
-    container_name: chatterbox-tts-server-cu128
+    image: chatterscript:cu128
+    container_name: chatterscript-cu128
     ports:
       - "8004:8004"
     volumes:

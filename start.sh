@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================================
-# Chatterbox TTS Server - Linux/macOS Launcher
+# Chatterscript - Linux/macOS Launcher
 # ============================================================================
-# Run this script to start the Chatterbox TTS Server.
+# Run this script to start Chatterscript.
 # This script finds Python and runs start.py with all arguments.
 #
 # Usage:
@@ -28,7 +28,7 @@ cd "$(dirname "$0")" || exit 1
 
 echo ""
 echo "============================================================"
-echo "   Chatterbox TTS Server - Launcher"
+echo "   Chatterscript - Launcher"
 echo "============================================================"
 echo ""
 
@@ -116,7 +116,7 @@ if [ "$MAJOR" -lt 3 ] || ([ "$MAJOR" -eq 3 ] && [ "$MINOR" -lt 10 ]); then
     echo -e "${RED}[ERROR] Python version too old!${NC}"
     echo "============================================================"
     echo ""
-    echo "Chatterbox TTS Server requires Python 3.10 or newer."
+    echo "Chatterscript requires Python 3.10 or newer."
     echo "Found: Python $MAJOR.$MINOR"
     echo ""
     echo "Please install a newer version of Python."
@@ -156,7 +156,7 @@ echo -e "${GREEN}[OK]${NC} Python venv module available"
 # ============================================================================
 echo ""
 echo "============================================================"
-echo "Starting Chatterbox TTS Server..."
+echo "Starting Chatterscript..."
 echo "============================================================"
 echo ""
 echo "Using: $PYTHON_CMD"

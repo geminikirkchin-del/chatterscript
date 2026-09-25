@@ -1,8 +1,8 @@
 @echo off
 REM ============================================================================
-REM Chatterbox TTS Server - Windows Launcher
+REM Chatterscript - Windows Launcher
 REM ============================================================================
-REM Double-click this file to start the Chatterbox TTS Server.
+REM Double-click this file to start Chatterscript.
 REM This script finds Python and runs start.py with all arguments.
 REM The window will stay open on errors so you can read the output.
 REM ============================================================================
@@ -13,7 +13,7 @@ cd /d "%~dp0"
 
 echo.
 echo ============================================================
-echo    Chatterbox TTS Server - Launcher
+echo    Chatterscript - Launcher
 echo ============================================================
 echo.
 
@@ -160,7 +160,7 @@ echo ============================================================
 echo [ERROR] Python version too old!
 echo ============================================================
 echo.
-echo Chatterbox TTS Server requires Python 3.10 or newer.
+echo Chatterscript requires Python 3.10 or newer.
 echo Found: Python !MAJOR!.!MINOR!
 echo.
 echo Please install Python 3.10+ from:
@@ -174,7 +174,7 @@ REM Run the main Python script
 REM ============================================================================
 echo.
 echo ============================================================
-echo Starting Chatterbox TTS Server...
+echo Starting Chatterscript...
 echo ============================================================
 echo.
 echo Using: !PYTHON_CMD!

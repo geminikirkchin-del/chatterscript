@@ -1,5 +1,5 @@
 // ui/script.js
-// Client-side JavaScript for the Chatterbox TTS Server web interface.
+// Client-side JavaScript for the Chatterscript web interface.
 // Handles UI interactions, API communication, audio playback, and settings management.
 
 document.addEventListener('DOMContentLoaded', async function () {
@@ -592,7 +592,7 @@ document.addEventListener('DOMContentLoaded', async function () {
     function initializeApplication() {
         const preferredTheme = localStorage.getItem('uiTheme') || currentUiState.theme || 'dark';
         applyTheme(preferredTheme);
-        const pageTitle = currentConfig?.ui?.title || "Chatterbox TTS Server";
+        const pageTitle = currentConfig?.ui?.title || "Chatterscript";
         document.title = pageTitle;
         if (appTitleLink) appTitleLink.textContent = pageTitle;
         if (ttsFormHeader) ttsFormHeader.textContent = `Generate Speech`;
@@ -639,7 +639,7 @@ document.addEventListener('DOMContentLoaded', async function () {
             console.error("Error fetching initial data:", error);
             showNotification(`Could not load essential application data: ${error.message}. Please try refreshing.`, 'error', 0);
             if (Object.keys(currentConfig).length === 0) {
-                currentConfig = { ui: { title: "Chatterbox TTS Server (Error Mode)" }, generation_defaults: {}, ui_state: {} };
+                currentConfig = { ui: { title: "Chatterscript (Error Mode)" }, generation_defaults: {}, ui_state: {} };
                 currentUiState = currentConfig.ui_state;
             }
             initializeApplication(); // Attempt to init in a degraded state

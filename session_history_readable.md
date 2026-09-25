@@ -1,4 +1,4 @@
-# Session History: wd_chatterbox-tts-server-kw_56ad1637f1b7
+# Session History: wd_chatterscript-kw_56ad1637f1b7
 
 ## Turn 1
 

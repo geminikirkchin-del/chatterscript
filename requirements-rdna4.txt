@@ -1,6 +1,6 @@
 # requirements-rdna4.txt
 #
-# AMD RDNA4 (gfx1201) application dependencies for Chatterbox TTS Server.
+# AMD RDNA4 (gfx1201) application dependencies for Chatterscript.
 # For RX 9070 / RX 9070 XT / Radeon AI PRO R9700 on Linux with ROCm 7.2+.
 #
 # PyTorch (torch, torchaudio, torchvision, triton) are installed separately

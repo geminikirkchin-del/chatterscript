@@ -1,14 +1,14 @@
-# Chatterbox TTS Server: OpenAI-Compatible API with Web UI, Large Text Handling & Built-in Voices
+# Chatterscript: OpenAI-Compatible API with Web UI, Large Text Handling & Built-in Voices
 
-**Self-host Resemble AI's [Chatterbox](https://github.com/resemble-ai/chatterbox) open-source TTS family (Original + Multilingual + Turbo) behind an OpenAI‑compatible API and a modern Web UI. The complete lineup includes the original high-quality model, multilingual support for 23 languages, and Chatterbox‑Turbo—a streamlined 350M-parameter model with dramatically improved throughput and native paralinguistic tags like `[laugh]`, `[cough]`, and `[chuckle]` for more expressive voice agents and narration. Features voice cloning, large text processing via intelligent chunking, audiobook generation, and consistent, reproducible voices using built-in ready-to-use voices and a generation seed feature.**
+**Self-host Resemble AI's [Chatterbox](https://github.com/resemble-ai/chatterbox) open-source TTS family (Original + Multilingual + Turbo) behind an OpenAI‑compatible API and a modern Web UI. The complete lineup includes the original high-quality model, multilingual support for 23 languages, and Chatterscript‑Turbo—a streamlined 350M-parameter model with dramatically improved throughput and native paralinguistic tags like `[laugh]`, `[cough]`, and `[chuckle]` for more expressive voice agents and narration. Features voice cloning, large text processing via intelligent chunking, audiobook generation, and consistent, reproducible voices using built-in ready-to-use voices and a generation seed feature.**
 
-> 🚀 **Try it now!** Test the full TTS server with voice cloning and audiobook generation in Google Colab - no installation required! To use it, please run cells 1 through 4 one at a time. After running cell 4, click on the "https://localhost:8004" link that appears in the output, and your web browser will open the UI from the .colab.dev domain. Read the instructions [here](https://github.com/devnen/Chatterbox-TTS-Server/blob/main/README_Colab.md).
+> 🚀 **Try it now!** Test the full TTS server with voice cloning and audiobook generation in Google Colab - no installation required! To use it, please run cells 1 through 4 one at a time. After running cell 4, click on the "https://localhost:8004" link that appears in the output, and your web browser will open the UI from the .colab.dev domain. Read the instructions [here](https://github.com/devnen/Chatterscript/blob/main/README_Colab.md).
 > 
-> [![Open Live Demo](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb)
+> [![Open Live Demo](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devnen/Chatterscript/blob/main/Chatterscript_Colab_Demo.ipynb)
 
 This server is based on the architecture and UI of our [Dia-TTS-Server](https://github.com/devnen/Dia-TTS-Server) project but uses the distinct `chatterbox-tts` engine. Runs accelerated on NVIDIA (CUDA), AMD (ROCm), and Apple Silicon (MPS) GPUs, with a fallback to CPU. Make sure you also check our [Kitten-TTS-Server](https://github.com/devnen/Kitten-TTS-Server) project.
 
-[![Project Link](https://img.shields.io/badge/GitHub-devnen/Chatterbox--TTS--Server-blue?style=for-the-badge&logo=github)](https://github.com/devnen/Chatterbox-TTS-Server)
+[![Project Link](https://img.shields.io/badge/GitHub-devnen/Chatterscript-blue?style=for-the-badge&logo=github)](https://github.com/devnen/Chatterscript)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](LICENSE)
 [![Python Version](https://img.shields.io/badge/Python-3.10_(required)-blue.svg?style=for-the-badge)](https://www.python.org/downloads/release/python-31011/)
 [![Framework](https://img.shields.io/badge/Framework-FastAPI-green.svg?style=for-the-badge)](https://fastapi.tiangolo.com/)
@@ -19,11 +19,11 @@ This server is based on the architecture and UI of our [Dia-TTS-Server](https://
 [![ROCm Compatible](https://img.shields.io/badge/AMD_ROCm-Compatible-ED1C24?style=for-the-badge&logo=amd&logoColor=white)](https://rocm.docs.amd.com/)
 [![MPS Compatible](https://img.shields.io/badge/Apple_MPS-Compatible-000000?style=for-the-badge&logo=apple&logoColor=white)](https://developer.apple.com/metal/)
 [![API](https://img.shields.io/badge/OpenAI_Compatible_API-Ready-000000?style=for-the-badge&logo=openai&logoColor=white)](https://platform.openai.com/docs/api-reference)
-[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb)
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devnen/Chatterscript/blob/main/Chatterscript_Colab_Demo.ipynb)
 
 <div align="center">
-  <img src="static/screenshot-d.png" alt="Chatterbox TTS Server Web UI - Dark Mode" width="33%" />
-  <img src="static/screenshot-l.png" alt="Chatterbox TTS Server Web UI - Light Mode" width="33%" />
+  <img src="static/screenshot-d.png" alt="Chatterscript Web UI - Dark Mode" width="33%" />
+  <img src="static/screenshot-l.png" alt="Chatterscript Web UI - Light Mode" width="33%" />
 </div>
 
 > 📦 **Portable Mode (Windows):** This application supports a fully portable installation — the entire folder, including Python and all dependencies, is self-contained. Copy it to a USB drive, share it as a zip, or move it anywhere. Just double-click `start.bat` — no Python installation needed on the target machine. [Learn more →](#-portable-mode-windows)
@@ -34,7 +34,7 @@ This server is based on the architecture and UI of our [Dia-TTS-Server](https://
 
 ### 🚀 v2.0.0 highlights (new)
 
-v2.0 ships the complete Chatterbox family on every major GPU stack behind one OpenAI-compatible API and Web UI. The headline themes:
+v2.0 ships the complete Chatterscript family on every major GPU stack behind one OpenAI-compatible API and Web UI. The headline themes:
 
 - **DGX Spark / sm_121 support** via the new `docker-compose-cu130.yml` (CUDA 13.0, PyTorch 2.10). RTX 30/40/50 keep using cu121 / cu128.
 - **AMD Strix Halo support** via `docker-compose-strixhalo.yml` (ROCm 7.2, `HSA_OVERRIDE_GFX_VERSION=11.0.0`).
@@ -47,7 +47,7 @@ v2.0 ships the complete Chatterbox family on every major GPU stack behind one Op
 - **Dynamic language selector** — the UI populates the language dropdown from `SUPPORTED_LANGUAGES` exposed by the multilingual engine.
 - **Chunker fix** — stray dashes in narrative text no longer get treated as bullet items that swallow the rest of the paragraph (#144).
 
-See the [v2.0.0 release notes](https://github.com/devnen/Chatterbox-TTS-Server/releases/tag/v2.0.0) for the full list with contributor credits.
+See the [v2.0.0 release notes](https://github.com/devnen/Chatterscript/releases/tag/v2.0.0) for the full list with contributor credits.
 
 ### 📦 Portable Mode for Windows (new)
 
@@ -58,16 +58,16 @@ See the [v2.0.0 release notes](https://github.com/devnen/Chatterbox-TTS-Server/r
 - Use `--portable` to skip the prompt and install in portable mode directly, or `--no-portable` for a standard virtual environment.
 - Linux and macOS use standard virtual environments with Python 3.10. Portable Mode is not available on these platforms, so Python 3.10 must be installed on the system.
 
-### 🌍 Chatterbox Multilingual support (new)
+### 🌍 Chatterscript Multilingual support (new)
 
-- Added full support for **Chatterbox Multilingual**, completing support for all three models in Resemble AI's Chatterbox family.
+- Added full support for **Chatterscript Multilingual**, completing support for all three models in Resemble AI's Chatterscript family.
 - Multilingual brings **23-language support** including Arabic, Chinese, Danish, Dutch, English, Finnish, French, German, Greek, Hebrew, Hindi, Italian, Japanese, Korean, Malay, Norwegian, Polish, Portuguese, Russian, Spanish, Swedish, Swahili, and Turkish.
-- Built on the same **0.5B-parameter architecture** as the original Chatterbox with emotion exaggeration control and zero-shot voice cloning.
+- Built on the same **0.5B-parameter architecture** as the original Chatterscript with emotion exaggeration control and zero-shot voice cloning.
 - Perfect for international projects, multilingual audiobooks, and voice agents serving global audiences.
 
-### ⚡ Chatterbox‑Turbo support (new)
+### ⚡ Chatterscript‑Turbo support (new)
 
-- Added full support for **Chatterbox‑Turbo**, Resemble AI's latest efficiency-focused Chatterbox model.
+- Added full support for **Chatterscript‑Turbo**, Resemble AI's latest efficiency-focused Chatterscript model.
 - Turbo is built on a **streamlined 350M‑parameter architecture**, designed to use less compute/VRAM while keeping high-fidelity output.
 - Turbo distills the speech-token-to-mel "audio diffusion decoder" from **10 steps → 1 step**, removing a major inference bottleneck.
 - Resemble positions Turbo for real-time/agent workflows and highlights significantly faster-than-real-time performance on GPU (performance varies by hardware/settings).
@@ -75,7 +75,7 @@ See the [v2.0.0 release notes](https://github.com/devnen/Chatterbox-TTS-Server/r
 ### 🔁 Hot‑swappable TTS engines (UI)
 
 - Added a new **engine selector** dropdown at the top of the Web UI.
-- Instantly hot-swap between **Original Chatterbox**, **Chatterbox Multilingual**, and **Chatterbox‑Turbo**; the backend auto-loads the selected engine.
+- Instantly hot-swap between **Chatterscript Original**, **Chatterscript Multilingual**, and **Chatterscript‑Turbo**; the backend auto-loads the selected engine.
 - All three models are **hot-swappable**—simply select from the dropdown and the backend automatically loads your choice without requiring restarts or configuration changes.
 - All UI + API requests route through the active engine so you can A/B test quality, language support, and latency without changing client code.
 
@@ -85,16 +85,16 @@ See the [v2.0.0 release notes](https://github.com/devnen/Chatterbox-TTS-Server/r
 - Supported tags include `[laugh]`, `[cough]`, and `[chuckle]`, plus text-based prompting for reactions like sigh, gasp, and cough.
 - Added **new presets** in `ui/presets.yaml` demonstrating paralinguistic prompting for agent-style scripts and expressive reads.
 
-### ✅ Original Chatterbox remains first‑class
+### ✅ Chatterscript Original remains first‑class
 
-- The original Chatterbox model remains available, with support for high quality English language output, a **0.5B LLaMA backbone**, **emotion exaggeration control**, and training on **0.5M hours** of cleaned data.
+- The original Chatterscript model remains available, with support for high quality English language output, a **0.5B LLaMA backbone**, **emotion exaggeration control**, and training on **0.5M hours** of cleaned data.
 
-### 🎯 Complete Chatterbox family support
+### 🎯 Complete Chatterscript family support
 
 **You now have access to the entire Chatterbox lineup:**
-- **Original Chatterbox** — High-quality English output with emotion control (0.5B parameters, 0.5M hours training data)
-- **Chatterbox Multilingual** — 23-language support with voice cloning and emotion control (0.5B parameters)
-- **Chatterbox Turbo** — Fastest inference with paralinguistic tags like `[laugh]` and `[cough]` (350M parameters, 1-step diffusion)
+- **Chatterscript Original** — High-quality English output with emotion control (0.5B parameters, 0.5M hours training data)
+- **Chatterscript Multilingual** — 23-language support with voice cloning and emotion control (0.5B parameters)
+- **Chatterscript Turbo** — Fastest inference with paralinguistic tags like `[laugh]` and `[cough]` (350M parameters, 1-step diffusion)
 
 **Switching models is effortless:** Simply select your preferred model from the engine selector dropdown at the top of the Web UI. No restarts, no configuration changes required—just instant hot-swapping to test quality, speed, and language support across the complete Chatterbox family.
 
@@ -122,14 +122,14 @@ See the [v2.0.0 release notes](https://github.com/devnen/Chatterbox-TTS-Server/r
 
 The [Chatterbox TTS model by Resemble AI](https://github.com/resemble-ai/chatterbox) provides capabilities for generating high-quality speech. This project builds upon that foundation by providing a robust [FastAPI](https://fastapi.tiangolo.com/) server that makes Chatterbox significantly easier to use and integrate.
 
-**🚀 Want to try it instantly?** [Launch the live demo in Google Colab](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb) - no installation needed!
+**🚀 Want to try it instantly?** [Launch the live demo in Google Colab](https://colab.research.google.com/github/devnen/Chatterscript/blob/main/Chatterscript_Colab_Demo.ipynb) - no installation needed!
 
 The server expects plain text input for synthesis and we solve the complexity of setting up and running the model by offering:
 
 *   A **modern Web UI** for easy experimentation, preset loading, reference audio management, and generation parameter tuning.
 *   **Multi-engine support (Original + Turbo):** Choose the TTS engine directly in the Web UI, then generate via the same UI/API surface.
 *   **Paralinguistic prompting (Turbo):** Native tags like `[laugh]`, `[cough]`, and `[chuckle]` for natural non-speech reactions inside the same generated voice.
-*   **Original Chatterbox strengths:** High quality English output plus unique "emotion exaggeration control" and 0.5B LLaMA backbone.
+*   **Chatterscript Original strengths:** High quality English output plus unique "emotion exaggeration control" and 0.5B LLaMA backbone.
 *   **Multi-Platform Acceleration:** Full support for **NVIDIA (CUDA)**, **AMD (ROCm)**, and **Apple Silicon (MPS)** GPUs, with an automatic fallback to **CPU**, ensuring you can run on any hardware.
 *   **Large Text Handling:** Intelligently splits long plain text inputs into manageable chunks based on sentence structure, processes them sequentially, and seamlessly concatenates the audio.
 *   **📚 Audiobook Generation:** Perfect for creating complete audiobooks - simply paste an entire book's text and the server automatically processes it into a single, seamless audio file with consistent voice quality throughout.
@@ -143,20 +143,20 @@ This server is your gateway to leveraging Chatterbox's TTS capabilities seamless
 ## ✨ Key Features of This Server
 
 **🔥 Live Demo Available:**
-*   **🚀 [One-Click Google Colab Demo](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb):** Try the full server with voice cloning and audiobook generation instantly in your browser - no local installation required!
+*   **🚀 [One-Click Google Colab Demo](https://colab.research.google.com/github/devnen/Chatterscript/blob/main/Chatterscript_Colab_Demo.ipynb):** Try the full server with voice cloning and audiobook generation instantly in your browser - no local installation required!
 
 This server application enhances the underlying `chatterbox-tts` engine with the following:
 
 **🚀 Core Functionality:**
 
 *   **Multi-Engine Support:**
-    *   Choose between **Original Chatterbox**, **Chatterbox Multilingual**, and **Chatterbox‑Turbo** via a hot-swappable engine selector in the Web UI.
-    *   **Original Chatterbox** provides high-quality English output with emotion exaggeration control (0.5B parameters).
-    *   **Chatterbox Multilingual** offers 23-language support with voice cloning and emotion control (0.5B parameters).
-    *   **Chatterbox Turbo** delivers significantly faster inference with a streamlined 350M-parameter architecture and paralinguistic tags.
+    *   Choose between **Chatterscript Original**, **Chatterscript Multilingual**, and **Chatterscript‑Turbo** via a hot-swappable engine selector in the Web UI.
+    *   **Chatterscript Original** provides high-quality English output with emotion exaggeration control (0.5B parameters).
+    *   **Chatterscript Multilingual** offers 23-language support with voice cloning and emotion control (0.5B parameters).
+    *   **Chatterscript Turbo** delivers significantly faster inference with a streamlined 350M-parameter architecture and paralinguistic tags.
     *   All three models are hot-swappable—simply select from the dropdown without restarts or config changes.
 *   **Paralinguistic Tags (Turbo):**
-    *   Write native tags like `[laugh]`, `[cough]`, and `[chuckle]` directly in your text when using Chatterbox‑Turbo.
+    *   Write native tags like `[laugh]`, `[cough]`, and `[chuckle]` directly in your text when using Chatterscript‑Turbo.
     *   New presets demonstrate paralinguistic prompting for agent-style scripts and expressive narration.
 *   **Large Text Processing (Chunking):**
     *   Automatically handles long plain text inputs by intelligently splitting them into smaller chunks based on sentence boundaries.
@@ -198,7 +198,7 @@ This server application enhances the underlying `chatterbox-tts` engine with the
 *   **Core Chatterbox Capabilities (via [Resemble AI Chatterbox](https://github.com/resemble-ai/chatterbox)):**
     *   🗣️ High-quality single-speaker voice synthesis from plain text.
     *   🎤 Perform voice cloning using reference audio prompts.
-    *   🎯 **Complete model family:** Original Chatterbox (English, emotion control), Chatterbox Multilingual (23 languages), and Chatterbox‑Turbo (fastest, paralinguistic tags).
+    *   🎯 **Complete model family:** Chatterscript Original (English, emotion control), Chatterscript Multilingual (23 languages), and Chatterscript‑Turbo (fastest, paralinguistic tags).
     *   🔄 **Hot-swappable engines:** Switch between all three models instantly via dropdown—no restarts needed.
 *   **Enhanced Server & API:**
     *   ⚡ Built with the high-performance **[FastAPI](https://fastapi.tiangolo.com/)** framework.
@@ -206,8 +206,8 @@ This server application enhances the underlying `chatterbox-tts` engine with the
     *   📄 Interactive API documentation via Swagger UI (`/docs`).
     *   🩺 Health check endpoint (`/api/ui/initial-data` also serves as a comprehensive status check).
 *   **Advanced Generation Features:**
-    *   🔁 **Hot-Swappable Engines:** Switch between Original Chatterbox, Chatterbox Multilingual, and Chatterbox‑Turbo directly in the Web UI—no restarts required.
-    *   🌍 **Multilingual Support:** 23 languages including Arabic, Chinese, French, German, Japanese, Spanish, and more via Chatterbox Multilingual.
+    *   🔁 **Hot-Swappable Engines:** Switch between Chatterscript Original, Chatterscript Multilingual, and Chatterscript‑Turbo directly in the Web UI—no restarts required.
+    *   🌍 **Multilingual Support:** 23 languages including Arabic, Chinese, French, German, Japanese, Spanish, and more via Chatterscript Multilingual.
     *   🎭 **Paralinguistic Tags (Turbo):** Native support for `[laugh]`, `[cough]`, `[chuckle]` and other expressive tags.
     *   📚 **Large Text Handling:** Intelligently splits long plain text inputs into chunks based on sentences, generates audio for each, and concatenates the results seamlessly. Configurable via `split_text` and `chunk_size`.
     *   📖 **Audiobook Creation:** Perfect for generating complete audiobooks from full-length texts with consistent voice quality and automatic chapter handling.
@@ -217,7 +217,7 @@ This server application enhances the underlying `chatterbox-tts` engine with the
     *   🔇 **Audio Post-Processing:** Optional automatic steps to trim silence, fix internal pauses, and remove long unvoiced segments/artifacts (configurable via `config.yaml`).
 *   **Intuitive Web User Interface:**
     *   🖱️ Modern, easy-to-use interface.
-    *   🔁 **Engine Selector:** Hot-swap between Original Chatterbox, Chatterbox Multilingual, and Chatterbox‑Turbo with a simple dropdown—no restarts needed.
+    *   🔁 **Engine Selector:** Hot-swap between Chatterscript Original, Chatterscript Multilingual, and Chatterscript‑Turbo with a simple dropdown—no restarts needed.
     *   💡 **Presets:** Load example text and settings dynamically from `ui/presets.yaml`.
     *   🎤 **Reference/Predefined Audio Upload:** Easily upload `.wav`/`.mp3` files.
     *   🗣️ **Voice Mode Selection:** Choose between Predefined Voices or Voice Cloning.
@@ -283,8 +283,8 @@ This project uses specific dependency files to ensure a smooth installation for 
 
 **1. Clone the Repository**
 ```bash
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
-cd Chatterbox-TTS-Server
+git clone https://github.com/devnen/Chatterscript.git
+cd Chatterscript
 ```
 
 ---
@@ -746,9 +746,9 @@ The compose file sets `ROCBLAS_USE_HIPBLASLT=0` (required for stability on gfx12
 
 ## 🚀 Live Demo - Try It Now! (Google Colab)
 
-**Want to test Chatterbox TTS Server immediately without any installation?**
+**Want to test Chatterscript immediately without any installation?**
 
-[![Open Live Demo](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devnen/Chatterbox-TTS-Server/blob/main/Chatterbox_TTS_Colab_Demo.ipynb)
+[![Open Live Demo](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/devnen/Chatterscript/blob/main/Chatterscript_Colab_Demo.ipynb)
 
 ### Why Try the Demo?
 - ✅ **Full Web UI** with all controls and features
@@ -880,7 +880,7 @@ Follow these steps to update your local installation to the latest version from 
 Before starting, open your terminal and go to the project folder.
 
 ```bash
-cd Chatterbox-TTS-Server
+cd Chatterscript
 ```
 
 ---
@@ -1073,7 +1073,7 @@ docker compose -f docker-compose-cu128.yml up -d --build
 
 The most intuitive way to use the server:
 
-*   **Engine Selector:** Use the dropdown at the top to switch between **Original Chatterbox** and **Chatterbox‑Turbo**. The backend auto-loads the selected engine.
+*   **Engine Selector:** Use the dropdown at the top to switch between **Chatterscript Original** and **Chatterscript‑Turbo**. The backend auto-loads the selected engine.
 *   **Text Input:** Enter your plain text script. **For audiobooks:** Simply paste the entire book text - the chunking system will automatically handle long texts and create seamless audio output.   
 *   **Voice Mode:** Choose:
     *   `Predefined Voices`: Select a curated voice from the `./voices` directory.
@@ -1087,14 +1087,14 @@ The most intuitive way to use the server:
 
 ### Using Paralinguistic Tags (Turbo)
 
-When the engine selector is set to **Chatterbox‑Turbo**, you can include paralinguistic tags inline:
+When the engine selector is set to **Chatterscript‑Turbo**, you can include paralinguistic tags inline:
 
 ```
 Hi there [chuckle] — thanks for calling back.
 One moment… [cough] sorry about that. Let's get this fixed.
 ```
 
-Turbo supports native tags like `[laugh]`, `[cough]`, and `[chuckle]` for more realistic, expressive speech. These tags are ignored when using Original Chatterbox.
+Turbo supports native tags like `[laugh]`, `[cough]`, and `[chuckle]` for more realistic, expressive speech. These tags are ignored when using Chatterscript Original.
 
 ### API Endpoints (`/docs` for interactive details)
 
@@ -1157,7 +1157,7 @@ curl -X POST http://localhost:8004/tts/srt \
 ```
 # 🐳 Docker Installation
 
-Run Chatterbox TTS Server easily using Docker. The recommended method uses Docker Compose, which is pre-configured for different GPU types.
+Run Chatterscript easily using Docker. The recommended method uses Docker Compose, which is pre-configured for different GPU types.
 
 ## Prerequisites
 
@@ -1173,8 +1173,8 @@ This method uses the provided `docker-compose.yml` files to manage the container
 
 ### 1. Clone the Repository
 ```bash
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
-cd Chatterbox-TTS-Server
+git clone https://github.com/devnen/Chatterscript.git
+cd Chatterscript
 ```
 
 ### 2. Start the Container Based on Your Hardware
@@ -1229,19 +1229,19 @@ Open your web browser to `http://localhost:PORT` (e.g., `http://localhost:8004` 
 #### **For NVIDIA GPU:**
 ```bash
 # Check if container can see NVIDIA GPU
-docker compose exec chatterbox-tts-server nvidia-smi
+docker compose exec chatterscript nvidia-smi
 
 # Verify PyTorch can access the GPU
-docker compose exec chatterbox-tts-server python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'GPU count: {torch.cuda.device_count()}')"
+docker compose exec chatterscript python3 -c "import torch; print(f'CUDA available: {torch.cuda.is_available()}'); print(f'GPU count: {torch.cuda.device_count()}')"
 ```
 
 #### **For AMD ROCm GPU:**
 ```bash
 # Check if container can see AMD GPU
-docker compose -f docker-compose-rocm.yml exec chatterbox-tts-server rocm-smi
+docker compose -f docker-compose-rocm.yml exec chatterscript rocm-smi
 
 # Verify PyTorch can access the GPU  
-docker compose -f docker-compose-rocm.yml exec chatterbox-tts-server python3 -c "import torch; print(f'ROCm available: {torch.cuda.is_available()}'); print(f'Device name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"No GPU detected\"}')"
+docker compose -f docker-compose-rocm.yml exec chatterscript python3 -c "import torch; print(f'ROCm available: {torch.cuda.is_available()}'); print(f'Device name: {torch.cuda.get_device_name(0) if torch.cuda.is_available() else \"No GPU detected\"}')"
 ```
 
 ### 5. View Logs and Manage Container```bash
@@ -1262,9 +1262,9 @@ docker compose -f docker-compose-cpu.yml down             # For CPU
 # Restart the container
 
 ```bash
-docker compose restart chatterbox-tts-server              # For NVIDIA
-docker compose -f docker-compose-rocm.yml restart chatterbox-tts-server # For AMD
-docker compose -f docker-compose-cpu.yml restart chatterbox-tts-server # For CPU
+docker compose restart chatterscript              # For NVIDIA
+docker compose -f docker-compose-rocm.yml restart chatterscript # For AMD
+docker compose -f docker-compose-cpu.yml restart chatterscript # For CPU
 ```
 
 ## AMD ROCm Support Details
@@ -1485,7 +1485,7 @@ python server.py
 *   **First run:** If `config.yaml` doesn't exist locally, the application will create a default one with sensible defaults.
 *   **Editing config:** You can edit the local `config.yaml` directly. Changes to server/model/path settings require a container restart:
     ```bash
-    docker compose restart chatterbox-tts-server
+    docker compose restart chatterscript
     ```
 *   **UI settings:** Changes to generation defaults and UI state are often saved automatically by the application.
 

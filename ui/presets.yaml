@@ -6,7 +6,7 @@
 # ============================================================================
 # ⚡ TURBO MODEL DEMONSTRATIONS (Paralinguistic Tags)
 # ============================================================================
-# These presets utilize tags supported ONLY by the Chatterbox Turbo model.
+# These presets utilize tags supported ONLY by the Chatterscript Turbo model.
 # Tags: [laugh], [chuckle], [sigh], [gasp], [cough], [clear throat], [sniff], [groan], [shush]
 # If used with the Original model, these tags will be spoken literally or be ignored.
 

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This guide provides instructions for running Chatterbox TTS Server with **CUDA 12.8 and PyTorch 2.9.0**, which includes support for the new **RTX 5090 and Blackwell architecture (sm_120)** GPUs.
+This guide provides instructions for running Chatterscript with **CUDA 12.8 and PyTorch 2.9.0**, which includes support for the new **RTX 5090 and Blackwell architecture (sm_120)** GPUs.
 
 ## Who Needs This?
 
@@ -21,8 +21,8 @@ The easiest way to install with CUDA 12.8 support is using the automated launche
 
 ```bash
 # Clone the repository
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
-cd Chatterbox-TTS-Server
+git clone https://github.com/devnen/Chatterscript.git
+cd Chatterscript
 
 # Run the launcher (double-click or run from command prompt)
 start.bat
@@ -34,8 +34,8 @@ When the installation menu appears, select option **[3] NVIDIA GPU (CUDA 12.8)**
 
 ```bash
 # Clone the repository
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
-cd Chatterbox-TTS-Server
+git clone https://github.com/devnen/Chatterscript.git
+cd Chatterscript
 
 # Make the launcher executable and run it
 chmod +x start.sh
@@ -62,14 +62,14 @@ For containerized deployment with CUDA 12.8 support:
 
 ```bash
 # Clone the repository
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
-cd Chatterbox-TTS-Server
+git clone https://github.com/devnen/Chatterscript.git
+cd Chatterscript
 
 # Build and start the CUDA 12.8 container
 docker compose -f docker-compose-cu128.yml up -d
 
 # View logs to confirm GPU is detected
-docker logs chatterbox-tts-server-cu128
+docker logs chatterscript-cu128
 
 # Access the web UI at http://localhost:8004
 ```
@@ -78,7 +78,7 @@ docker logs chatterbox-tts-server-cu128
 
 ```bash
 # Build the image
-docker build -f Dockerfile.cu128 -t chatterbox-tts-server:cu128 .
+docker build -f Dockerfile.cu128 -t chatterscript:cu128 .
 
 # Run the container
 docker run -d \
@@ -89,7 +89,7 @@ docker run -d \
   -v $(pwd)/outputs:/app/outputs \
   -v $(pwd)/voices:/app/voices \
   -v ~/.cache/huggingface:/app/hf_cache \
-  chatterbox-tts-server:cu128
+  chatterscript:cu128
 ```
 
 ## Manual Installation (Alternative)
@@ -98,8 +98,8 @@ If you prefer to install manually without using the launcher:
 
 ```bash
 # Clone the repository
-git clone https://github.com/devnen/Chatterbox-TTS-Server.git
-cd Chatterbox-TTS-Server
+git clone https://github.com/devnen/Chatterscript.git
+cd Chatterscript
 
 # Create and activate virtual environment
 python -m venv venv
@@ -341,4 +341,4 @@ docker compose up -d
 
 ## Contributing
 
-Found an issue with CUDA 12.8 support? Please [open an issue](https://github.com/devnen/Chatterbox-TTS-Server/issues) or submit a pull request.
+Found an issue with CUDA 12.8 support? Please [open an issue](https://github.com/devnen/Chatterscript/issues) or submit a pull request.

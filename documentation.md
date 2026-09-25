@@ -1,8 +1,8 @@
-# Chatterbox TTS Server - Technical Documentation
+# Chatterscript - Technical Documentation
 
 **Version:** 1.0.0
 **Last Updated:** 5/31/2025
-**Project Repository:** [https://github.com/devnen/Chatterbox-TTS-Server](https://github.com/devnen/Chatterbox-TTS-Server)
+**Project Repository:** [https://github.com/devnen/Chatterscript](https://github.com/devnen/Chatterscript)
 
 This server is based on the architecture and UI of our [Dia-TTS-Server](https://github.com/devnen/Dia-TTS-Server) project but uses the distinct `chatterbox-tts` engine.
 
@@ -96,14 +96,14 @@ This server is based on the architecture and UI of our [Dia-TTS-Server](https://
 
 ## 1. Visual Overview
 
-This section provides a high-level visual representation of the Chatterbox TTS Server project structure and its primary components.
+This section provides a high-level visual representation of the Chatterscript project structure and its primary components.
 
 ### 1.1 Directory Structure
 
 The following tree illustrates the organization of files and directories within the project root:
 
 ```
-Chatterbox-TTS-Server/
+Chatterscript/
 │
 ├── config.py             # Manages config.yaml, default values, accessors
 ├── config.yaml           # PRIMARY configuration file (created/managed by server)
@@ -166,7 +166,7 @@ This diagram illustrates the major functional components of the server and their
 
 ### 2.1 Purpose
 
-The Chatterbox TTS Server is a self-hostable application designed to provide an accessible and feature-rich interface to the `chatterbox-tts` speech synthesis engine. It aims to simplify the process of generating high-quality speech by offering:
+Chatterscript is a self-hostable application designed to provide an accessible and feature-rich interface to the `chatterbox-tts` speech synthesis engine. It aims to simplify the process of generating high-quality speech by offering:
 *   A user-friendly Web User Interface (Web UI) for interactive use.
 *   A robust Application Programming Interface (API) for programmatic integration, including an OpenAI-compatible endpoint.
 *   Advanced features such as voice cloning, predefined voices, large text handling through intelligent chunking, and fine-grained control over generation parameters.
@@ -175,20 +175,20 @@ The Chatterbox TTS Server is a self-hostable application designed to provide an 
 
 The server uses the **`chatterbox-tts`** engine family developed by Resemble AI, via the `devnen/chatterbox-v2` fork. Three model variants are supported and hot-swappable at runtime through the Web UI engine dropdown (no restart required). The selected model is configured via `model.repo_id` in `config.yaml`.
 
-**2.2.1 Original Chatterbox** (`model.repo_id: chatterbox`)
+**2.2.1 Chatterscript Original** (`model.repo_id: chatterbox`)
 
 - 0.5B-parameter LLaMA-backed model trained on 0.5M hours of cleaned data.
 - English only. High fidelity, strong voice cloning, supports `exaggeration` and `cfg_weight` parameters for emotion control.
 - Best choice when English quality is the priority and multilingual is not needed.
 
-**2.2.2 Chatterbox Turbo** (`model.repo_id: chatterbox-turbo`)
+**2.2.2 Chatterscript Turbo** (`model.repo_id: chatterbox-turbo`)
 
 - 350M-parameter streamlined variant. Distills the speech-token-to-mel diffusion decoder from 10 steps to 1, removing a major inference bottleneck.
 - Supports **paralinguistic tags** in the input text: `[laugh]`, `[cough]`, `[chuckle]`, plus text-based prompting for sigh / gasp / cough reactions.
 - Ignores `exaggeration`, `cfg_weight`, and `min_p` parameters (the model API does not take them) — the server logs a warning when these are passed and proceeds with the supported subset.
 - Best choice for real-time / agent workflows where latency matters more than absolute fidelity.
 
-**2.2.3 Chatterbox Multilingual** (`model.repo_id: chatterbox-multilingual`)
+**2.2.3 Chatterscript Multilingual** (`model.repo_id: chatterbox-multilingual`)
 
 - 0.5B-parameter variant trained on 23 languages: Arabic, Chinese, Danish, Dutch, English, Finnish, French, German, Greek, Hebrew, Hindi, Italian, Japanese, Korean, Malay, Norwegian, Polish, Portuguese, Russian, Spanish, Swahili, Swedish, Turkish.
 - Zero-shot voice cloning across languages, plus emotion exaggeration.
@@ -295,11 +295,11 @@ Before you begin, ensure you have:
 2.  Navigate to the directory where you want to install the server.
 3.  Clone the project repository from GitHub:
     ```bash
-    git clone https://github.com/devnen/Chatterbox-TTS-Server.git
+    git clone https://github.com/devnen/Chatterscript.git
     ```
 4.  Change into the project directory:
     ```bash
-    cd Chatterbox-TTS-Server
+    cd Chatterscript
     ```
 
 ### 4.3 Python Virtual Environment Setup
@@ -308,7 +308,7 @@ It is strongly recommended to use a Python virtual environment to isolate projec
 
 #### 4.3.1 Windows
 ```powershell
-# Ensure you are in the Chatterbox-TTS-Server directory
+# Ensure you are in the Chatterscript directory
 python -m venv venv
 .\venv\Scripts\activate
 # Your command prompt should now be prefixed with (venv).
@@ -316,7 +316,7 @@ python -m venv venv
 
 #### 4.3.2 Linux/macOS
 ```bash
-# Ensure you are in the Chatterbox-TTS-Server directory
+# Ensure you are in the Chatterscript directory
 python3 -m venv venv
 source venv/bin/activate
 # Your command prompt should now be prefixed with (venv).
@@ -441,7 +441,7 @@ The server uses a `config.yaml` file for all its settings.
 
 ## 5. Configuration (`config.yaml`)
 
-The Chatterbox TTS Server is configured primarily through a single YAML file, `config.yaml`, located in the root directory of the project.
+Chatterscript is configured primarily through a single YAML file, `config.yaml`, located in the root directory of the project.
 
 ### 5.1 Overview
 `config.yaml` allows customization of various aspects of the server, including network settings, model parameters, file paths, TTS engine behavior, UI preferences, and default generation values. The server reads this file upon startup.
@@ -489,7 +489,7 @@ The following table describes the main sections and some key parameters you migh
 |                       | `hide_chunk_warning`          | boolean       | Flag to hide the chunking warning modal.                                                                      | `false`                  |
 |                       | `hide_generation_warning`     | boolean       | Flag to hide the general generation quality notice modal.                                                     | `false`                  |
 |                       | `theme`                       | string        | Default UI theme (`dark` or `light`).                                                                         | `dark`                   |
-| **`ui`**              | `title`                       | string        | Title displayed in the web UI.                                                                                | `Chatterbox TTS Server`  |
+| **`ui`**              | `title`                       | string        | Title displayed in the web UI.                                                                                | `Chatterscript`  |
 |                       | `show_language_select`        | boolean       | Whether to show language selection in the UI.                                                                 | `true`                   |
 |                       | `max_predefined_voices_in_dropdown`| integer  | Max predefined voices to list in UI dropdown before it might become less usable.                            | `20`                     |
 | **`debug`**           | `save_intermediate_audio`     | boolean       | If true, save intermediate audio files during chunk processing for debugging.                                 | `false`                  |
@@ -526,7 +526,7 @@ The Web UI provides sections to manage parts of `config.yaml`:
 
 ### 6.1 Starting the Server
 1.  Ensure your Python virtual environment is activated (see Section [4.3 Python Virtual Environment Setup](#43-python-virtual-environment-setup)).
-2.  Navigate to the root directory of the `Chatterbox-TTS-Server` project in your terminal.
+2.  Navigate to the root directory of the `Chatterscript` project in your terminal.
 3.  Execute the following command:
     ```bash
     python server.py
@@ -552,11 +552,11 @@ For containerized deployment, refer to the `Dockerfile` [1] and `docker-compose.
 
 ## 7. Feature Deep Dive
 
-This section elaborates on key features of the Chatterbox TTS Server.
+This section elaborates on key features of Chatterscript.
 
 ### 7.1 Text Input
 
-The Chatterbox TTS Server expects **plain text** as input for speech synthesis.
+Chatterscript expects **plain text** as input for speech synthesis.
 *   Standard punctuation (periods, commas, question marks, exclamation marks) is generally recognized by the underlying TTS engine to influence prosody.
 *   The server and the `chatterbox-tts` engine do **not** support special tags for:
     *   Speaker differentiation (e.g., `[S1]`, `[S2]`). All generated speech will be in a single voice per request, determined by the selected voice mode.
@@ -628,7 +628,7 @@ The server includes optional audio post-processing steps handled by `utils.py` [
 
 ## 8. Usage Guide
 
-This section explains how to use the Chatterbox TTS Server through its Web UI and API.
+This section explains how to use Chatterscript through its Web UI and API.
 
 ### 8.1 Web User Interface (Web UI)
 
@@ -701,7 +701,7 @@ This endpoint is designed to be compatible with the basic OpenAI TTS API structu
     | `speed`           | float   | No       | Playback speed factor (e.g., 0.5 to 2.0). Applied post-generation.                                                                                                       | `1.0`                 |
     | `seed`            | integer | No       | Generation seed for reproducibility. `0` or absent might use default engine randomness.                                                                                  | `0` (from config)     |
 
-*   **Processing Logic (Hypothetical for Chatterbox Server):**
+*   **Processing Logic (Hypothetical for Chatterscript Server):**
     *   The server would parse the `voice` parameter. It would need to check if the `voice` string matches a filename in the `predefined_voices_path` or `reference_audio_path` to determine if it's a predefined voice or a clone request.
     *   If `voice` corresponds to a predefined voice, `voice_mode="predefined"` and `predefined_voice_id` would be set internally.
     *   If `voice` corresponds to a reference audio, `voice_mode="clone"` and `reference_audio_filename` would be set internally.
@@ -780,7 +780,7 @@ The `predefined_voice_id`, `reference_audio_filename` fields on `/tts` and the `
 
 ## 9. Troubleshooting
 
-This section provides guidance on common issues encountered with the Chatterbox TTS Server.
+This section provides guidance on common issues encountered with Chatterscript.
 
 ### 9.1 Common Issues and Solutions
 
@@ -808,7 +808,7 @@ This section provides guidance on common issues encountered with the Chatterbox 
 
 ## 10. Project Architecture
 
-This section outlines the software architecture of the Chatterbox TTS Server.
+This section outlines the software architecture of Chatterscript.
 
 ### 10.1 Key Modules and Their Roles
 

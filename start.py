@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Chatterbox TTS Server - Cross-Platform Launcher Script
+Chatterscript - Cross-Platform Launcher Script
 =======================================================
 
 A user-friendly launcher with automatic setup, virtual environment
@@ -186,7 +186,7 @@ def print_banner():
     """Print the startup banner."""
     print()
     print("=" * 60)
-    print("   Chatterbox TTS Server - Launcher")
+    print("   Chatterscript - Launcher")
     print("=" * 60)
     print()
 
@@ -242,7 +242,7 @@ def print_status_box(host, port):
 
     print()
     print("=" * 60)
-    print(f"   {Colors.GREEN}🎙️  Chatterbox TTS Server is running!{Colors.RESET}")
+    print(f"   {Colors.GREEN}🎙️  Chatterscript is running!{Colors.RESET}")
     print()
     print(f"   Web Interface:  {url}")
     print(f"   API Docs:       {url}/docs")
@@ -2186,7 +2186,7 @@ def parse_args():
         argparse.Namespace with parsed arguments
     """
     parser = argparse.ArgumentParser(
-        description="Chatterbox TTS Server - Launcher",
+        description="Chatterscript - Launcher",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
@@ -2499,7 +2499,7 @@ def main():
     is_installed, current_type = get_install_state(venv_dir)
 
     if not is_installed:
-        print_step(4, total_steps, "Installing Chatterbox TTS Server...")
+        print_step(4, total_steps, "Installing Chatterscript...")
 
         # Create environment if it doesn't exist
         if not venv_dir.exists():
@@ -2662,7 +2662,7 @@ def main():
     # ========================================================================
     # Step 6: Launch server
     # ========================================================================
-    print_step(6, total_steps, "Launching Chatterbox TTS Server...")
+    print_step(6, total_steps, "Launching Chatterscript...")
 
     server_process = launch_server(venv_python, root_dir)
 
@@ -2723,7 +2723,7 @@ def main():
         print()
         print()
         print("-" * 40)
-        print("Shutting down Chatterbox TTS Server...")
+        print("Shutting down Chatterscript...")
         print("-" * 40)
 
         cleanup_server(server_process)
