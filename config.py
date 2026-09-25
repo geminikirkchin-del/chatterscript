@@ -99,7 +99,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "theme": "dark",  # Default UI theme ('dark' or 'light').
     },
     "ui": {  # General UI display settings.
-        "title": "Chatterbox TTS Server",  # Title displayed in the web UI.
+        "title": "Chatterscript",  # Title displayed in the web UI.
         "show_language_select": True,  # Whether to show language selection in the UI.
         "max_predefined_voices_in_dropdown": 20,  # Max predefined voices to list in UI dropdown.
     },
@@ -109,7 +109,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "pipeline": {  # Long-form TTS pipeline settings
         "max_segment_duration_sec": 15.0,  # Target max audio duration per segment (one sentence).
         "pause_ms": 150,  # Silence inserted between segments in milliseconds.
-        "max_retry_count": 3,  # Retry attempts per failed segment.
+        "max_retry_count": 3,  # Retry attempts per failed segment (kept: verifier churn is fixed by looser CER/WER below).
         "verification": {  # Audio + ASR verification thresholds
             # Legacy thresholds used by the basic audio verifier layer.
             "max_silence_ms": 500,
@@ -143,8 +143,14 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                     "enabled": True,
                     "hardfail": True,
                     "thresholds": {
-                        "max_wer": 0.15,
-                        "max_cer": 0.10,
+                        # Opened for the Chinese `small`-model ASR: whisperx `small`
+                        # on zh narration routinely scores CER ~0.10-0.18 and WER
+                        # ~0.15-0.28 even for correct audio, so the old 0.10/0.15
+                        # thresholds triggered false `cer_too_high`/`wer_too_high`
+                        # retries on nearly every segment. These still catch
+                        # genuinely garbled audio while cutting verification churn.
+                        "max_wer": 0.28,
+                        "max_cer": 0.18,
                         # Minimum absolute error count before a WER/CER rate may
                         # fail a segment. Guards tiny sentences where 1 char of
                         # difference in 8 chars is already CER 0.125.
