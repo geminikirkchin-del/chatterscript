@@ -194,8 +194,15 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                         "max_drift_ratio": 1.25,
                     },
                 },
+                # Feedback-only layers (hardfail=False) never gate a segment's
+                # pass/fail, but each spawns a subprocess per segment (~7s + ~5s).
+                # On a 29-segment job that is ~6 min of pure overhead that
+                # cannot change any segment's outcome. Disabled by default to cut
+                # verification time; re-enable (set "enabled": True) when you need
+                # the speaker-similarity / spectral diagnostics in the verification
+                # log for a feedback review cycle.
                 "resemblyzer_speaker": {
-                    "enabled": True,
+                    "enabled": False,
                     "hardfail": False,
                     "thresholds": {
                         # Calibrated from 116 verified zh segments (46-script run):
@@ -204,7 +211,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
                     },
                 },
                 "librosa_spectral": {
-                    "enabled": True,
+                    "enabled": False,
                     "hardfail": False,
                     "thresholds": {
                         # Calibrated from the same run: mfcc_mse p50=1850, p95=3164;
