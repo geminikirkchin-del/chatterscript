@@ -1,6 +1,13 @@
 # ADR-0002: Jobs orphaned on restart — no resume/watchdog on boot
 
-**Status:** Accepted (2026-09-25)
+**Status:** Superseded by [ADR-0003](0003-resume-worker-idempotency.md) (2026-09-26)
+
+**_Note (2026-09-26):** ADR-0003 implements the automatic resume this ADR
+declined — a single serial worker, boot-time `reconcile_orphans()`, and
+per-segment idempotent execution. The decision below is preserved for history
+and for the failure-mode analysis it records.
+
+**Status (original):** Accepted (2026-09-25)
 
 ## Context
 

@@ -110,6 +110,10 @@ DEFAULT_CONFIG: Dict[str, Any] = {
         "max_segment_duration_sec": 15.0,  # Target max audio duration per segment (one sentence).
         "pause_ms": 150,  # Silence inserted between segments in milliseconds.
         "max_retry_count": 3,  # Retry attempts per failed segment (kept: verifier churn is fixed by looser CER/WER below).
+        "worker": {  # Single serial pipeline worker (resume/watchdog/idempotency).
+            "enabled": True,  # Master switch: whether the worker thread is started.
+            "poll_interval_sec": 2.0,  # How often the worker scans for a PENDING job.
+        },
         "verification": {  # Audio + ASR verification thresholds
             # Legacy thresholds used by the basic audio verifier layer.
             "max_silence_ms": 500,
@@ -1056,6 +1060,22 @@ def get_pipeline_max_retry_count() -> int:
     return config_manager.get_int(
         "pipeline.max_retry_count",
         _get_default_from_structure("pipeline.max_retry_count"),
+    )
+
+
+def get_pipeline_worker_enabled() -> bool:
+    """Returns whether the serial pipeline worker thread should run."""
+    return config_manager.get_bool(
+        "pipeline.worker.enabled",
+        _get_default_from_structure("pipeline.worker.enabled"),
+    )
+
+
+def get_pipeline_worker_poll_interval_sec() -> float:
+    """Returns the worker's scan interval for a PENDING job, in seconds."""
+    return config_manager.get_float(
+        "pipeline.worker.poll_interval_sec",
+        _get_default_from_structure("pipeline.worker.poll_interval_sec"),
     )
 
 

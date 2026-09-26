@@ -16,6 +16,8 @@ from config import (
     get_audio_sample_rate,
     get_output_path,
     get_pipeline_max_retry_count,
+    get_pipeline_max_segment_duration_sec,
+    get_pipeline_pause_ms,
 )
 from pipeline.agent import AgentDecision, ParameterAgent
 from pipeline.composer import (
@@ -103,13 +105,20 @@ class PipelineService:
         pipeline_config: Optional[Dict[str, Any]] = None,
         job_name: Optional[str] = None,
     ) -> str:
-        """Create a new pipeline job and persist it."""
+        """Create a new pipeline job and persist it.
+
+        The script is split into segments ONCE here so the segment list is
+        stable for the job's whole life. A resumed run reprocesses this
+        persisted list (skipping already-passed segments) instead of
+        re-splitting, which is what makes resume idempotent.
+        """
         job_id = f"pipe-{uuid.uuid4().hex[:12]}"
         folder_name = job_id
         if job_name:
             slug = re.sub(r"[^\w\-]+", "_", job_name).strip("_") or "job"
             folder_name = f"{job_id}_{slug}"
         now = time.time()
+        pipeline_config = pipeline_config or {}
         job = PipelineJob(
             job_id=job_id,
             text=text,
@@ -119,13 +128,111 @@ class PipelineService:
             segments=[],
             created_at=now,
             updated_at=now,
-            pipeline_config=pipeline_config or {},
+            pipeline_config=pipeline_config,
             job_name=job_name,
             folder_name=folder_name,
         )
+        language = gen_params.get("language", "en")
+        max_segment_duration = pipeline_config.get(
+            "max_segment_duration_sec", get_pipeline_max_segment_duration_sec()
+        )
+        self._seed_segments(job, max_segment_duration=max_segment_duration, language=language)
         self.store.save(job)
-        logger.info(f"Created pipeline job {job_id}")
+        logger.info(f"Created pipeline job {job_id} with {len(job.segments)} segment(s)")
         return job_id
+
+    def _seed_segments(
+        self, job: PipelineJob, max_segment_duration: float, language: str
+    ) -> None:
+        """Split job.text into persisted Segment records, all PENDING.
+
+        Guards against double-seeding: only seeds when the segment list is
+        empty (fresh submit, or a legacy job written before this existed).
+        """
+        if job.segments:
+            return
+        segments_texts = split_text_into_segments(
+            job.text, max_duration=max_segment_duration, language=language
+        )
+        job.segments = [
+            Segment(
+                index=idx,
+                text=text,
+                status=SegmentStatus.PENDING,
+                gen_params=dict(job.gen_params),
+            )
+            for idx, text in enumerate(segments_texts)
+        ]
+
+    def _reconcile_segment_state(self, seg_record: Segment) -> None:
+        """Enforce the idempotent completion contract for one segment.
+
+        A segment is trusted as done only if it is PASSED and its audio file
+        genuinely exists and is non-empty. Other terminal-looking states are
+        reconciled to PENDING so a resumed run regenerates deterministically:
+
+        - PASSED with missing/empty audio -> PENDING (regenerate).
+        - GENERATING / VERIFYING (mid-crash) -> PENDING (the atomic
+          .tmp.wav-then-replace publish means no partial final exists).
+        - FAILED stays FAILED unless the caller explicitly resets it (retry).
+        """
+        if seg_record.status == SegmentStatus.PASSED:
+            if not seg_record.audio_path:
+                seg_record.status = SegmentStatus.PENDING
+                return
+            p = Path(seg_record.audio_path)
+            if not p.exists() or p.stat().st_size == 0:
+                seg_record.status = SegmentStatus.PENDING
+                seg_record.audio_path = None
+        elif seg_record.status in (SegmentStatus.GENERATING, SegmentStatus.VERIFYING):
+            seg_record.status = SegmentStatus.PENDING
+            seg_record.audio_path = None
+
+    def reconcile_orphans(self) -> int:
+        """Reset orphaned RUNNING jobs to PENDING so a worker can reclaim them.
+
+        Called at startup. Under the single-serial-worker model, no worker
+        thread is alive during boot, so every RUNNING job on disk is orphaned
+        (its background task vanished on the last process death). PENDING jobs
+        are left for the worker; DONE/FAILED are untouched. Returns the number
+        of jobs reclaimed.
+        """
+        reclaimed = 0
+        for summary in self.list_jobs():
+            job = self.get_job(summary.job_id)
+            if job is None or job.status != PipelineJobStatus.RUNNING:
+                continue
+            job.status = PipelineJobStatus.PENDING
+            self.store.save(job)
+            reclaimed += 1
+            logger.warning(
+                f"reconcile_orphans: reclaimed orphaned job {job.job_id} "
+                f"({len(job.segments)} persisted segment(s)) back to PENDING"
+            )
+        return reclaimed
+
+    def next_pending_job(self, older_than: float = 0.0) -> Optional[PipelineJob]:
+        """Return the oldest PENDING job, or None if none is runnable.
+
+        `older_than` avoids claiming a job created in the same instant as the
+        scan (before submit returns). Under the single worker this is
+        belt-and-braces; only the sole worker ever claims jobs.
+        """
+        candidates: List[PipelineJob] = []
+        now = time.time()
+        for summary in self.list_jobs():
+            if summary.status != PipelineJobStatus.PENDING.value:
+                continue
+            created = summary.created_at or 0.0
+            if older_than and (now - created) < older_than:
+                continue
+            job = self.get_job(summary.job_id)
+            if job is not None and job.status == PipelineJobStatus.PENDING:
+                candidates.append(job)
+        if not candidates:
+            return None
+        candidates.sort(key=lambda j: j.created_at or 0.0)
+        return candidates[0]
 
     def get_job(self, job_id: str) -> Optional[PipelineJob]:
         return self.store.load(job_id)
@@ -164,26 +271,40 @@ class PipelineService:
 
         try:
             language = job.gen_params.get("language", "en")
-            segments = split_text_into_segments(
-                job.text, max_duration=max_segment_duration, language=language
-            )
-            logger.info(f"Job {job_id}: split into {len(segments)} segment(s)")
+            # Back-compat: a PENDING job written before the resume feature had
+            # no persisted segments; seed them now (idempotent — no-op if the
+            # list is already populated by submit_job or a prior run).
+            if not job.segments:
+                self._seed_segments(
+                    job,
+                    max_segment_duration=(
+                        job.pipeline_config.get(
+                            "max_segment_duration_sec",
+                            get_pipeline_max_segment_duration_sec(),
+                        )
+                    ),
+                    language=language,
+                )
+                self.store.save(job)
+            logger.info(f"Job {job_id}: processing {len(job.segments)} segment(s)")
 
             audio_prompt_path = self._resolve_audio_prompt_path(job.voice_config)
             segment_files: List[Path] = []
 
-            for idx, segment_text in enumerate(segments):
-                seg_record = Segment(
-                    index=idx,
-                    text=segment_text,
-                    status=SegmentStatus.PENDING,
-                    gen_params=dict(job.gen_params),
-                )
-                job.segments.append(seg_record)
+            for seg_record in list(job.segments):
                 job.status = PipelineJobStatus.RUNNING
+                # Enforce the idempotent completion contract before processing:
+                # a PASSED segment is only trusted if its audio file genuinely
+                # exists; interrupted (GENERATING/VERIFYING) states reset to
+                # PENDING so a resumed run regenerates them deterministically
+                # instead of shipping a partial take.
+                self._reconcile_segment_state(seg_record)
+                if seg_record.status == SegmentStatus.PASSED and seg_record.audio_path:
+                    segment_files.append(Path(seg_record.audio_path))
+                    continue
                 self.store.save(job)
 
-                expected_duration = estimate_segment_duration(segment_text, language)
+                expected_duration = estimate_segment_duration(seg_record.text, language)
                 seg_path = self._generate_and_verify_segment(
                     job=job,
                     seg_record=seg_record,
@@ -205,7 +326,7 @@ class PipelineService:
                     if best_effort.exists():
                         segment_files.append(best_effort)
                         logger.warning(
-                            f"Job {job_id} segment {idx}: including unverified "
+                            f"Job {job_id} segment {seg_record.index}: including unverified "
                             f"best-effort audio (all attempts failed)"
                         )
 

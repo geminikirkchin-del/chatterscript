@@ -62,6 +62,8 @@ from config import (
     get_audio_output_format,
     get_pipeline_max_segment_duration_sec,
     get_pipeline_pause_ms,
+    get_pipeline_worker_enabled,
+    get_pipeline_worker_poll_interval_sec,
     get_pipeline_default_temperature,
     get_pipeline_default_exaggeration,
     get_pipeline_default_cfg_weight,
@@ -86,7 +88,8 @@ from models import (  # Pydantic models
 )
 import utils  # Utility functions
 from pipeline.jobs import PipelineService
-from pipeline.models import PipelineJobStatus
+from pipeline.models import PipelineJobStatus, SegmentStatus
+from pipeline.worker import PipelineWorker
 
 from pydantic import BaseModel, Field
 
@@ -200,6 +203,13 @@ async def lifespan(app: FastAPI):
             browser_thread.start()
 
         logger.info("Application startup sequence complete.")
+        # Reclaim jobs orphaned by a prior process death, then start the single
+        # serial worker. Enabled via config so headless/testing setups can opt out.
+        if get_pipeline_worker_enabled():
+            reclaimed = pipeline_service.reconcile_orphans()
+            if reclaimed:
+                logger.info("Reconciled %d orphaned pipeline job(s) back to PENDING", reclaimed)
+            pipeline_worker.start()
         startup_complete_event.set()
         yield
     except Exception as e_startup:
@@ -210,6 +220,10 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         logger.info("TTS Server: Application shutdown sequence initiated...")
+        try:
+            pipeline_worker.stop(timeout=10)
+        except Exception as e:
+            logger.warning(f"Pipeline worker stop failed: {e}")
         logger.info("TTS Server: Application shutdown complete.")
 
 
@@ -223,6 +237,15 @@ app = FastAPI(
 
 # --- Pipeline service (state persisted to disk) ---
 pipeline_service = PipelineService()
+
+# --- Single serial pipeline worker (resume / watchdog / idempotency) ---
+# Exactly one worker runs jobs serially, so only one TTS job ever touches the
+# GPU at a time, and jobs orphaned by a prior process death are reclaimed at
+# boot by pipeline_service.reconcile_orphans() in the lifespan below.
+pipeline_worker = PipelineWorker(
+    service=pipeline_service,
+    poll_interval=get_pipeline_worker_poll_interval_sec(),
+)
 
 
 # --- CORS Middleware ---
@@ -1485,26 +1508,6 @@ def _build_voice_config(request: PipelineSubmitRequest) -> Dict[str, Any]:
         }
 
 
-def _run_pipeline_job(job_id: str, max_segment_duration: float, pause_ms: int):
-    """Background worker that runs a pipeline job to completion."""
-    try:
-        pipeline_service.run_job_sync(
-            job_id=job_id,
-            max_segment_duration=max_segment_duration,
-            pause_ms=pause_ms,
-        )
-    except Exception as e:
-        logger.error(f"Background pipeline job {job_id} failed: {e}", exc_info=True)
-
-
-def _retry_failed_pipeline_segments(job_id: str, pause_ms: int):
-    """Background worker that re-runs only the failed segments of a job."""
-    try:
-        pipeline_service.retry_failed_segments(job_id=job_id, pause_ms=pause_ms)
-    except Exception as e:
-        logger.error(f"Background retry-failed for job {job_id} failed: {e}", exc_info=True)
-
-
 @app.post(
     "/api/tts-pipeline/{job_id}/retry-failed",
     tags=["TTS Pipeline"],
@@ -1515,10 +1518,11 @@ def _retry_failed_pipeline_segments(job_id: str, pause_ms: int):
         409: {"model": ErrorResponse, "description": "Job is still running."},
     },
 )
-async def retry_failed_pipeline_segments(job_id: str, background_tasks: BackgroundTasks):
+async def retry_failed_pipeline_segments(job_id: str):
     """
-    Re-generate only the failed segments of a DONE/FAILED job, keeping the
-    already-verified audio of passed segments, then recompose the final audio.
+    Reset failed segments to PENDING (keeping already-verified audio) and let
+    the single worker re-run the job. run_job_sync skips PASSED segments and
+    regenerates only the PENDING ones, then recomposes the final audio.
     Returns immediately; poll GET /api/tts-pipeline/{job_id} for status.
     """
     job = pipeline_service.get_job(job_id)
@@ -1529,11 +1533,19 @@ async def retry_failed_pipeline_segments(job_id: str, background_tasks: Backgrou
             status_code=409,
             detail=f"Pipeline job '{job_id}' is still running (status={job.status.value}).",
         )
-    background_tasks.add_task(
-        _retry_failed_pipeline_segments, job_id, get_pipeline_pause_ms()
+    reset_count = 0
+    for seg in job.segments:
+        if seg.status == SegmentStatus.FAILED:
+            seg.status = SegmentStatus.PENDING
+            seg.failure_reason = None
+            seg.audio_path = None
+            reset_count += 1
+    job.status = PipelineJobStatus.PENDING
+    pipeline_service.store.save(job)
+    logger.info(
+        f"Enqueued retry-failed for pipeline job {job_id} (reset {reset_count} segment(s))"
     )
-    logger.info(f"Submitted retry-failed for pipeline job {job_id}")
-    return PipelineSubmitResponse(job_id=job_id, status=PipelineJobStatus.RUNNING.value)
+    return PipelineSubmitResponse(job_id=job_id, status=PipelineJobStatus.PENDING.value)
 
 
 def _read_input_script(filename: str) -> str:
@@ -1563,7 +1575,7 @@ def _read_input_script(filename: str) -> str:
     },
 )
 async def submit_pipeline_job(
-    request: PipelineSubmitRequest, background_tasks: BackgroundTasks
+    request: PipelineSubmitRequest
 ):
     """
     Submit a long script for asynchronous sentence-by-sentence TTS generation.
@@ -1593,6 +1605,12 @@ async def submit_pipeline_job(
     if request.output_format is not None:
         pipeline_config["output_format"] = request.output_format
     pipeline_config["sample_rate"] = get_audio_sample_rate()
+    # Segment split happens at submit time (persisted segment list); carry the
+    # caller's overrides through pipeline_config so the split uses them.
+    if request.max_segment_duration_sec is not None:
+        pipeline_config["max_segment_duration_sec"] = request.max_segment_duration_sec
+    if request.pause_ms is not None:
+        pipeline_config["pause_ms"] = request.pause_ms
 
     job_id = pipeline_service.submit_job(
         text=text,
@@ -1602,17 +1620,10 @@ async def submit_pipeline_job(
         job_name=job_name,
     )
 
-    max_segment_duration = (
-        request.max_segment_duration_sec
-        if request.max_segment_duration_sec is not None
-        else get_pipeline_max_segment_duration_sec()
-    )
-    pause_ms = request.pause_ms if request.pause_ms is not None else get_pipeline_pause_ms()
-
-    background_tasks.add_task(
-        _run_pipeline_job, job_id, max_segment_duration, pause_ms
-    )
-    logger.info(f"Submitted pipeline job {job_id}")
+    # No fire-and-forget background task here: the single serial worker picks
+    # up the PENDING job. This both avoids concurrent GPU generation and makes
+    # the job recoverable across a restart (reconcile_orphans reclaims it).
+    logger.info(f"Submitted pipeline job {job_id}; worker will process it")
     return PipelineSubmitResponse(job_id=job_id, status=PipelineJobStatus.PENDING.value)
 
 
