@@ -25,7 +25,6 @@ logger = logging.getLogger(__name__)
 SS_ALPHA = 1.5     # over-subtraction factor
 SS_BETA = 0.02     # spectral floor as a fraction of local magnitude
 SS_ONSET_DB = -30.0  # frames above this count as speech
-SS_FALLBACK_QUIET_FRAC = 0.05  # if no pre-speech bed, profile from quietest frames
 
 # Pause normalization parameters (grilling option 2: moderate).
 SILENCE_THRESHOLD_DB = -40.0   # what counts as silence
@@ -205,22 +204,8 @@ def _spectral_subtract(audio: np.ndarray, sr: int) -> np.ndarray:
 
     onset = _speech_onset_sample(audio, sr)
     bed_end = max(0, onset - int(sr * 0.05))
-    if bed_end >= int(sr * 0.1):
-        bed = audio[:bed_end]
-    else:
-        # Fallback: quietest frames of the segment as the noise profile.
-        frame = max(1, int(sr * 0.02))
-        n = len(audio) // frame
-        frames = audio[: n * frame].reshape(n, frame)
-        rms = np.sqrt(np.mean(frames.astype(np.float64) ** 2, axis=1))
-        k = max(1, int(n * SS_FALLBACK_QUIET_FRAC))
-        quiet_idx = np.argsort(rms)[:k]
-        bed = frames[quiet_idx].reshape(-1)
-        if len(bed) < int(sr * 0.05):
-            return audio
-
-    if len(bed) < 2048:
-        return audio
+    use_bed = bed_end >= int(sr * 0.1)
+    bed = audio[:bed_end] if use_bed else None
 
     # Reflect-pad so the first/last STFT windows reconstruct cleanly;
     # without padding the ISTFT edges blow up (window normalization).
@@ -230,7 +215,19 @@ def _spectral_subtract(audio: np.ndarray, sr: int) -> np.ndarray:
     if specs.size == 0:
         return audio
     mag, phase = np.abs(specs), np.angle(specs)
-    profile = np.mean(np.abs(_stft(bed)), axis=0)
+    if use_bed and bed is not None and len(bed) >= 2048:
+        # Preferred: mean magnitude of the segment's own pre-speech quiet bed.
+        # Best when a genuine quiet lead-in exists.
+        profile = np.mean(np.abs(_stft(bed)), axis=0)
+    else:
+        # No usable pre-speech bed (segment starts speaking abruptly, or the
+        # lead-in is itself elevated noise). The old fallback profiled the
+        # "quietest 5% of frames" — but on windy segments no frame is quiet, so
+        # that profile approximated the noise itself and subtraction floored
+        # out with no effect (noise floor stayed ~-38 dB = audible wind).
+        # Speech is sparse over time, so the per-frequency-bin median across
+        # ALL frames is a robust noise estimate even with no quiet frames.
+        profile = np.median(mag, axis=0)
     mag_out = np.maximum(mag - SS_ALPHA * profile, SS_BETA * mag)
     out = _istft(mag_out * np.exp(1j * phase), len(padded))
     return out[pad : pad + len(audio)].astype(np.float32)

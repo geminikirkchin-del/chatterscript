@@ -128,6 +128,42 @@ def test_denoise_reduces_noise_floor():
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def test_denoise_reduces_noise_floor_without_pre_speech_bed():
+    """Regression: segments that start speaking abruptly (no pre-speech quiet
+    lead-in) on a uniform noise bed. The old fallback profiled the 'quietest
+    5% of frames' — but when the whole segment is noisy, no frame is quiet, so
+    the profile approximated the noise itself and subtraction floored out,
+    leaving the noise floor at ~-38 dB (audible wind behind speech). The
+    median-across-frames profile must still drop it, like it does on the
+    real windy segments (seg 3/4/5/15 of the book-share-006 job)."""
+    tmp = tempfile.mkdtemp()
+    try:
+        rng = np.random.default_rng(7)
+        # Uniform elevated noise bed across the WHOLE segment (no quiet region).
+        noise_bed = 0.03 * rng.standard_normal(int(2.0 * SR)).astype(np.float32)
+        # Tone starts at t=0 (abrupt onset) so there is no pre-speech silence.
+        audio = (_tone(2.0, amp=0.4) + noise_bed).astype(np.float32)
+        audio = np.clip(audio, -1.0, 1.0).astype(np.float32)
+        path = Path(tmp) / "seg.wav"
+        _write(path, audio)
+
+        # Verify the test premise: no usable pre-speech bed (bed would be ~0s).
+        from pipeline.polish import _speech_onset_sample
+        onset = _speech_onset_sample(audio, SR)
+        assert onset / SR < 0.1, f"test invalid: onset too late ({onset/SR:.2f}s)"
+
+        report = polish_segment_audio(str(path), denoise=True)
+        assert report["denoise_applied"] is True
+        before = report["noise_floor_before_db"]
+        after = report["noise_floor_after_db"]
+        assert after < before - 5.0, (
+            f"noisy segment with no pre-speech bed must still be denoised: "
+            f"{before} -> {after}"
+        )
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def test_job_polishes_segments_before_verification():
     from pipeline.jobs import PipelineService
     from pipeline.models import PipelineJobStatus, SegmentStatus
@@ -214,6 +250,7 @@ if __name__ == "__main__":
     test_head_and_tail_silence_trimmed()
     test_natural_pauses_untouched()
     test_denoise_reduces_noise_floor()
+    test_denoise_reduces_noise_floor_without_pre_speech_bed()
     test_job_polishes_segments_before_verification()
     test_compose_polishes_legacy_unpolished_segments()
     print("ALL POLISH TESTS PASSED")
